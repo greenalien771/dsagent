@@ -118,7 +118,7 @@ func TestAbortMidBatchKeepsSessionAlive(t *testing.T) {
 			cancel1()
 		}
 	}
-	a.run(ctx1, "task one", ModeAgent, emit1)
+	a.run(ctx1, "task one", ModeAgent, nil, emit1)
 	cancel1()
 
 	f.mu.Lock()
@@ -138,7 +138,7 @@ func TestAbortMidBatchKeepsSessionAlive(t *testing.T) {
 
 	// Second task in the same session: this is the request that used to 400.
 	events = nil
-	a.run(context.Background(), "task two", ModeAgent, func(kind, text string) {
+	a.run(context.Background(), "task two", ModeAgent, nil, func(kind, text string) {
 		events = append(events, kind)
 	})
 
@@ -179,7 +179,7 @@ func TestCorruptedTranscriptIsRepairedOnTheWire(t *testing.T) {
 	}
 	a.mu.Unlock()
 
-	a.run(context.Background(), "task two", ModeAgent, func(string, string) {})
+	a.run(context.Background(), "task two", ModeAgent, nil, func(string, string) {})
 
 	f.mu.Lock()
 	violated := f.violated

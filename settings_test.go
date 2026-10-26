@@ -41,7 +41,7 @@ func TestRunKeepsItsStepBudgetWhenSettingsChange(t *testing.T) {
 		}
 	}
 
-	a.run(context.Background(), "task", ModeAgent, emit)
+	a.run(context.Background(), "task", ModeAgent, nil, emit)
 
 	f.mu.Lock()
 	requests := f.requests
@@ -203,7 +203,7 @@ func TestConfigSavesDoNotDeadlockARun(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		a.run(context.Background(), "task", ModeAgent, func(string, string) {})
+		a.run(context.Background(), "task", ModeAgent, nil, func(string, string) {})
 	}()
 
 	select {

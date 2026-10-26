@@ -259,7 +259,7 @@ func TestRunRepairsHistoryBeforeTheNextTask(t *testing.T) {
 	// the first loop check without ever calling the API.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	a.run(ctx, "new task", ModeAgent, func(string, string) {})
+	a.run(ctx, "new task", ModeAgent, nil, func(string, string) {})
 
 	a.mu.Lock()
 	got := append([]Msg(nil), a.messages...)

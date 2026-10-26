@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // withTempConfig points the config dir at a scratch directory for one test.
@@ -380,5 +381,50 @@ func TestMutatingEndpointsRefuseGet(t *testing.T) {
 	guard(h).ServeHTTP(w, post)
 	if w.Code != http.StatusOK || !hit {
 		t.Fatalf("POST on a POST-only endpoint: got %d, ran=%v", w.Code, hit)
+	}
+}
+
+// The watchdog timers are settings, so they have to survive a save and a
+// reload, and an out-of-range value must be refused rather than silently
+// rewritten - a timeout the form says one thing about and the run uses another
+// is worse than a save that failed loudly.
+func TestWatchdogTimeoutsDefaultSaveAndValidate(t *testing.T) {
+	withTempConfig(t)
+
+	c := loadConfig()
+	if c.IdleTimeoutSec != defaultIdleTimeoutSec || c.RunTimeoutMin != defaultRunTimeoutMin {
+		t.Fatalf("defaults = %ds/%dmin, want %ds/%dmin",
+			c.IdleTimeoutSec, c.RunTimeoutMin, defaultIdleTimeoutSec, defaultRunTimeoutMin)
+	}
+	if idle, hard := c.watchdogLimits(); idle != 120*time.Second || hard != 25*time.Minute {
+		t.Fatalf("watchdogLimits() = %v/%v, want 2m0s/25m0s", idle, hard)
+	}
+
+	idle, hard := 45, 3
+	if err := applyPatch(c, configPatch{IdleTimeoutSec: &idle, RunTimeoutMin: &hard}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.watchdogLimits(); got != 45*time.Second {
+		t.Fatalf("idle limit = %v, want 45s", got)
+	}
+	if _, got := c.watchdogLimits(); got != 3*time.Minute {
+		t.Fatalf("hard limit = %v, want 3m", got)
+	}
+
+	// A reload proves the numbers went to disk with the rest of the config.
+	again := loadConfig()
+	if again.IdleTimeoutSec != 45 || again.RunTimeoutMin != 3 {
+		t.Fatalf("reloaded = %ds/%dmin, want 45s/3min", again.IdleTimeoutSec, again.RunTimeoutMin)
+	}
+
+	tooSmall, tooBig := 1, maxRunTimeoutMin+1
+	if err := applyPatch(c, configPatch{IdleTimeoutSec: &tooSmall}); err == nil {
+		t.Fatal("an idle timeout below the minimum was accepted")
+	}
+	if err := applyPatch(c, configPatch{RunTimeoutMin: &tooBig}); err == nil {
+		t.Fatal("a task limit above the maximum was accepted")
+	}
+	if c.IdleTimeoutSec != 45 || c.RunTimeoutMin != 3 {
+		t.Fatalf("a refused value was written anyway: %ds/%dmin", c.IdleTimeoutSec, c.RunTimeoutMin)
 	}
 }

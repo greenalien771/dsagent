@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 )
 
 // keyEnvVar lets the user keep the key completely off disk.
@@ -33,8 +34,16 @@ type Config struct {
 	MaxSteps int    `json:"max_steps"`
 
 	// AutoApprove skips the per-tool approval prompt (run_shell, write_file).
-	// Dangerous: the agent then runs unattended. Toggled from Tools Settings.
+	// Dangerous: the agent then runs unattended. Set from Safety in Settings.
 	AutoApprove bool `json:"auto_approve"`
+
+	// IdleTimeoutSec and RunTimeoutMin size the run watchdog: a task that
+	// produces no output for IdleTimeoutSec, or that runs longer than
+	// RunTimeoutMin of wall clock, is cancelled. They are the numbers the
+	// Agent pane shows, so "how long may a task run" is a setting and not a
+	// constant in the binary.
+	IdleTimeoutSec int `json:"idle_timeout_sec"`
+	RunTimeoutMin  int `json:"run_timeout_min"`
 
 	// KeySource records where the key came from ("env" or "store") so the UI
 	// can explain why edits are ignored. Never contains the key itself.
@@ -43,6 +52,28 @@ type Config struct {
 
 // maxStepLimit matches the max="200" the settings form offers.
 const maxStepLimit = 200
+
+// Watchdog defaults and bounds. The bounds exist so no single field in the
+// settings form can turn the watchdog off: a run always ends on its own.
+const (
+	defaultIdleTimeoutSec = 120
+	defaultRunTimeoutMin  = 25
+	minIdleTimeoutSec     = 10
+	maxIdleTimeoutSec     = 1800
+	minRunTimeoutMin      = 1
+	maxRunTimeoutMin      = 240
+)
+
+// clampInt pins a hand-edited or posted value into [lo, hi].
+func clampInt(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
 
 var cfgMu sync.Mutex
 
@@ -64,7 +95,8 @@ type legacyConfig struct {
 }
 
 func loadConfig() *Config {
-	c := &Config{Model: "deepseek-flash", MaxSteps: 25}
+	c := &Config{Model: "deepseek-flash", MaxSteps: 25,
+		IdleTimeoutSec: defaultIdleTimeoutSec, RunTimeoutMin: defaultRunTimeoutMin}
 
 	raw, err := os.ReadFile(configPath())
 	if err == nil {
@@ -72,7 +104,8 @@ func loadConfig() *Config {
 			// A corrupt file must not take the agent down; start clean but keep
 			// the unreadable original for forensics.
 			os.Rename(configPath(), configPath()+".corrupt")
-			c = &Config{Model: "deepseek-flash", MaxSteps: 25}
+			c = &Config{Model: "deepseek-flash", MaxSteps: 25,
+				IdleTimeoutSec: defaultIdleTimeoutSec, RunTimeoutMin: defaultRunTimeoutMin}
 		} else {
 			// Migrate a plaintext key out of config.json as soon as we see one.
 			var legacy legacyConfig
@@ -96,6 +129,18 @@ func loadConfig() *Config {
 	if c.MaxSteps <= 0 {
 		c.MaxSteps = 25
 	}
+	// A config written before these existed carries zeroes, and a hand-edited
+	// file can carry nonsense; both end up on the documented default or inside
+	// the documented range.
+	if c.IdleTimeoutSec <= 0 {
+		c.IdleTimeoutSec = defaultIdleTimeoutSec
+	}
+	if c.RunTimeoutMin <= 0 {
+		c.RunTimeoutMin = defaultRunTimeoutMin
+	}
+	c.IdleTimeoutSec = clampInt(c.IdleTimeoutSec, minIdleTimeoutSec, maxIdleTimeoutSec)
+	c.RunTimeoutMin = clampInt(c.RunTimeoutMin, minRunTimeoutMin, maxRunTimeoutMin)
+
 	if c.WorkDir == "" {
 		c.WorkDir, _ = os.Getwd()
 	}
@@ -203,6 +248,8 @@ type configView struct {
 	WorkDir        string `json:"workdir"`
 	MaxSteps       int    `json:"max_steps"`
 	AutoApprove    bool   `json:"auto_approve"`
+	IdleTimeoutSec int    `json:"idle_timeout_sec"`
+	RunTimeoutMin  int    `json:"run_timeout_min"`
 	APIKeySet      bool   `json:"api_key_set"`
 	APIKeyHint     string `json:"api_key_hint,omitempty"`
 	APIKeySource   string `json:"api_key_source,omitempty"`
@@ -217,6 +264,8 @@ func viewOf(c *Config) configView {
 		WorkDir:        c.WorkDir,
 		MaxSteps:       c.MaxSteps,
 		AutoApprove:    c.AutoApprove,
+		IdleTimeoutSec: c.IdleTimeoutSec,
+		RunTimeoutMin:  c.RunTimeoutMin,
 		APIKeySet:      c.APIKey != "",
 		APIKeyHint:     hintOf(c.APIKey),
 		APIKeySource:   c.KeySource,
@@ -244,8 +293,12 @@ type configPatch struct {
 	WorkDir     *string `json:"workdir"`
 	MaxSteps    *int    `json:"max_steps"`
 	AutoApprove *bool   `json:"auto_approve"`
-	APIKey      *string `json:"api_key"`
-	ClearAPIKey *bool   `json:"clear_api_key"`
+	// Watchdog timers. Out-of-range values are refused rather than clamped:
+	// a silently rewritten timeout is worse than one that did not save.
+	IdleTimeoutSec *int    `json:"idle_timeout_sec"`
+	RunTimeoutMin  *int    `json:"run_timeout_min"`
+	APIKey         *string `json:"api_key"`
+	ClearAPIKey    *bool   `json:"clear_api_key"`
 }
 
 // applyPatch mutates the config and persists it.
@@ -309,6 +362,22 @@ func applyPatch(c *Config, p configPatch) error {
 	if p.AutoApprove != nil {
 		c.AutoApprove = *p.AutoApprove
 	}
+	if p.IdleTimeoutSec != nil {
+		if v := *p.IdleTimeoutSec; v < minIdleTimeoutSec || v > maxIdleTimeoutSec {
+			errs = append(errs, fmt.Sprintf("idle timeout must be between %d and %d seconds",
+				minIdleTimeoutSec, maxIdleTimeoutSec))
+		} else {
+			c.IdleTimeoutSec = v
+		}
+	}
+	if p.RunTimeoutMin != nil {
+		if v := *p.RunTimeoutMin; v < minRunTimeoutMin || v > maxRunTimeoutMin {
+			errs = append(errs, fmt.Sprintf("task time limit must be between %d and %d minutes",
+				minRunTimeoutMin, maxRunTimeoutMin))
+		} else {
+			c.RunTimeoutMin = v
+		}
+	}
 
 	if err := saveConfig(c); err != nil {
 		errs = append(errs, "could not save config: "+err.Error())
@@ -344,6 +413,23 @@ func (c *Config) runSettings() (workDir string, maxSteps int) {
 	cfgMu.Lock()
 	defer cfgMu.Unlock()
 	return c.WorkDir, c.MaxSteps
+}
+
+// watchdogLimits returns the idle and wall-clock limits this run is judged by.
+// Read under cfgMu like runSettings, so a Save that lands mid-run cannot make
+// one tick use one timeout and the next tick another.
+func (c *Config) watchdogLimits() (idle, hard time.Duration) {
+	cfgMu.Lock()
+	defer cfgMu.Unlock()
+	idle = time.Duration(c.IdleTimeoutSec) * time.Second
+	hard = time.Duration(c.RunTimeoutMin) * time.Minute
+	if idle <= 0 {
+		idle = defaultIdleTimeoutSec * time.Second
+	}
+	if hard <= 0 {
+		hard = defaultRunTimeoutMin * time.Minute
+	}
+	return idle, hard
 }
 
 // credentials returns the model and key together under one lock, so a

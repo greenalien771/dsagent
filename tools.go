@@ -29,6 +29,11 @@ const maxOut = 8000
 // a step and confuses the transcript.
 func toolSchemas(mode string) []map[string]any {
 	fn := func(name, desc string, props map[string]any, required []string) map[string]any {
+		// A tool with no required arguments must still send an array: the API
+		// validates against JSON Schema, where "required" null is not an array.
+		if required == nil {
+			required = []string{}
+		}
 		return map[string]any{"type": "function", "function": map[string]any{
 			"name": name, "description": desc,
 			"parameters": map[string]any{"type": "object", "properties": props, "required": required},
@@ -45,6 +50,13 @@ func toolSchemas(mode string) []map[string]any {
 
 		fn("web_fetch", "Fetch a URL and return its plain text (truncated to 8KB).", map[string]any{
 			"url": map[string]any{"type": "string"}}, []string{"url"}),
+
+		fn("screenshot", `Capture the screen as an image you can then look at. Pass x/y/width/height to grab only one region: that is how you zoom in on a dialog, an error box or a chart instead of guessing from a full-screen picture. Pass scale (0.1-1) to shrink a big region so it costs fewer tokens. The image appears on the step after this call.`, map[string]any{
+			"x":      map[string]any{"type": "integer", "description": "left edge in screen pixels, default 0"},
+			"y":      map[string]any{"type": "integer", "description": "top edge in screen pixels, default 0"},
+			"width":  map[string]any{"type": "integer", "description": "region width in pixels, default the whole desktop"},
+			"height": map[string]any{"type": "integer", "description": "region height in pixels, default the whole desktop"},
+			"scale":  map[string]any{"type": "number", "description": "zoom factor 0.1-1.0, default 1 (native pixels)"}}, nil),
 	}
 
 	// Mutating tools: agent always, plan never, ask never.
@@ -66,7 +78,12 @@ func toolSchemas(mode string) []map[string]any {
 	return tools
 }
 
-func needsApproval(name string) bool { return name == "run_shell" || name == "write_file" }
+// needsApproval lists the tools a human must see before they run. screenshot is
+// on it for a privacy reason rather than a destructive one: it ships the
+// contents of the user's screen to the remote API.
+func needsApproval(name string) bool {
+	return name == "run_shell" || name == "write_file" || name == "screenshot"
+}
 
 // safeJoin resolves rel against root and refuses anything that lands outside it.
 //
@@ -232,6 +249,13 @@ func runTool(ctx context.Context, root string, tc ToolCall) string {
 			return s + "\nEXIT: " + err.Error()
 		}
 		return s
+
+	case "screenshot":
+		out, err := captureScreenshot(ctx, tc.Function.Arguments)
+		if err != nil {
+			return "ERROR: " + err.Error()
+		}
+		return out
 
 	case "web_fetch":
 		raw := strings.TrimSpace(str("url"))

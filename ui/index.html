@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>dsagent - AI code agent</title>
+  <link rel="icon" type="image/svg+xml" href="logo.svg">
   <!-- Vendored locally (no CDN, works offline): marked v18.1.1, DOMPurify 3.4.17, highlight.js 11.12.0 -->
   <link rel="stylesheet" href="vendor/highlight-github-dark.css">
   <script src="vendor/marked.umd.js"></script>
@@ -229,15 +230,22 @@
        a long run of steps into one connected conversation instead of a stack
        of unrelated boxes.
        The connector itself is not CSS: paintRail() draws it into this SVG layer
-       as an orthogonal zig-zag (down, jog sideways, down, back), so each hop
-       visibly links one step to the next instead of being one endless
-       hairline. The layer sits under the entries, which is why the avatars and
-       node dots paint over it. */
+       as one straight vertical run through the centre of every circle, so each
+       step is visibly linked to the next instead of floating beside the rail.
+       It is a single x: a hop starts and ends on the circle's own centre, so
+       the line never drifts off to one side. The layer sits under the entries,
+       which is why the avatars and node dots paint over it.
+       Each circle also gets a horizontal stub: from its centre out to the left
+       edge of its own entry, so the rail visibly meets the message it belongs
+       to instead of running past it at a distance. */
     .thread > svg.rail {
       position: absolute; inset: 0; width: 100%; height: 100%;
       overflow: visible; pointer-events: none; z-index: 0;
     }
     .thread > svg.rail path { fill: none; stroke: var(--border-2); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+    /* The stub dies on the message edge, so it stops flat there instead of
+       overshooting into the card by the round cap's radius. */
+    .thread > svg.rail path.stubs { stroke-linecap: butt; }
     .thread > :not(.hero):not(.rail) { position: relative; margin-left: 36px; margin-bottom: 14px; z-index: 1; }
     /* The archive notice is a banner about the whole thread, not a step in it. */
     .thread > .archive-bar { margin-left: 0; }
@@ -247,7 +255,9 @@
     .thread > .approval::after,
     .thread > .plan-actions::after,
     .thread > .live-row::after {
-      content: ''; position: absolute; left: -31px; top: 13px; width: 12px; height: 12px;
+      /* 16px across, not 12: `*` does not match pseudo-elements, so the 2px
+         border adds to the declared size. Centre = padding box left -33 +8. */
+      content: ''; position: absolute; left: -33px; top: 13px; width: 12px; height: 12px;
       border-radius: 50%; background: var(--bg); border: 2px solid var(--border-2);
     }
     .thread > .tool-card[data-state="error"]::after { border-color: var(--danger); }
@@ -314,6 +324,16 @@
     .msg-head .mini-act { margin-left: auto; opacity: 0; font-size: 10.5px; color: var(--muted-2); }
     .msg:hover .mini-act { opacity: 1; }
     .msg-head .mini-act:hover { color: var(--text-2); }
+    /* Message actions: one icon per option, revealed on hover so the
+       transcript stays quiet. Replaces the single "copy" text link. */
+    .msg-acts { margin-left: auto; display: flex; align-items: center; gap: 1px; opacity: 0; }
+    .msg:hover .msg-acts, .msg-acts:focus-within { opacity: 1; }
+    .msg-acts button {
+      width: 21px; height: 19px; display: grid; place-items: center;
+      border-radius: 4px; color: var(--muted-2);
+    }
+    .msg-acts button:hover { background: var(--hover); color: var(--text); }
+    .msg-acts svg { width: 12.5px; height: 12.5px; }
     .bubble.user {
       align-self: flex-start; max-width: 100%;
       padding: 8px 12px; border-radius: 8px;
@@ -496,6 +516,16 @@
     .pop button { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 6px 8px; border-radius: 5px; font-size: 12px; color: var(--text-2); }
     .pop button:hover { background: var(--hover); color: var(--text); }
     .pop .pop-label { padding: 6px 8px 3px; font-size: 9.5px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted-2); }
+    .pop .pop-sep { height: 1px; margin: 4px 6px; background: var(--border); }
+    /* attachments: a file chip is text, an image chip is the picture itself */
+    .chip-x img { width: 14px; height: 14px; border-radius: 3px; object-fit: cover; display: block; }
+    .chip-x .chip-kind { font-size: 9px; letter-spacing: .4px; text-transform: uppercase; color: var(--muted-2); }
+    .bubble.user .u-imgs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .bubble.user .u-imgs img { max-width: 190px; max-height: 130px; border-radius: 6px; border: 1px solid var(--border-2); display: block; }
+    /* a picture the agent itself captured, shown in the transcript */
+    .shot-card { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--panel); }
+    .shot-card .shot-head { font-size: 10px; text-transform: uppercase; letter-spacing: .7px; color: var(--muted-2); }
+    .shot-card img { max-width: 100%; max-height: 340px; border-radius: 6px; border: 1px solid var(--border); cursor: zoom-in; }
     .mode-toggle { display: flex; gap: 1px; padding: 2px; background: transparent; border: 1px solid var(--border); border-radius: 7px; }
     .mode-toggle button { padding: 2px 9px; border-radius: 5px; font-size: 11px; color: var(--muted-2); font-weight: 500; }
     .mode-toggle button:hover { color: var(--text-2); }
@@ -635,6 +665,15 @@
     .perm-warn { font-size: 11px; color: var(--muted); line-height: 1.5; margin-top: 4px; }
     .perm-warn b { color: var(--warn-text); }
     .perm-warn code { font-family: var(--mono); font-size: 10px; background: var(--code-bg); padding: 1px 4px; border-radius: 3px; }
+    .btn-always {
+      padding: 5px 12px; border-radius: 6px; font-size: 11.5px; font-weight: 550;
+      border: 1px solid rgba(176, 161, 132, .38); color: var(--warn-text);
+    }
+    .btn-always:hover { background: rgba(176, 161, 132, .14); }
+    /* ON is a state, not a warning: the gate is already open, so the button
+       that closes it is drawn like a normal action. */
+    .btn-always.on { border-color: var(--border-2); color: var(--text-2); }
+    .btn-always.on:hover { background: var(--hover); color: var(--text); }
     .cfg-error { display: none; margin-top: 12px; font-size: 11.5px; color: var(--danger-text); background: var(--danger-soft); border: 1px solid rgba(183, 125, 122, .26); border-radius: 6px; padding: 8px 10px; }
     .btn-cancel { border: 1px solid var(--border-2); color: var(--text-2); }
     .btn-cancel:hover { background: var(--hover); color: var(--text); }
@@ -827,9 +866,9 @@
   <!-- ================= title bar (Cursor) ================= -->
   <header class="titlebar">
     <div class="brand">
-      <svg class="logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round">
-        <path d="M12 2.5 21 7.5v9L12 21.5 3 16.5v-9z"></path>
-        <path d="M12 2.5v19M3 7.5l9 5 9-5"></path>
+      <svg class="logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2.6 20.4 7.4v9.2L12 21.4 3.6 16.6V7.4z"></path>
+        <path d="M8.2 8.7l3.5 3.3-3.5 3.3M13.3 15.3h2.8" stroke-width="2.3"></path>
       </svg>
       <span>dsagent</span>
     </div>
@@ -1004,12 +1043,18 @@
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
                   </button>
                   <div class="pop" id="plusPop">
+                    <div class="pop-label">Attach</div>
+                    <button onclick="pickFiles()">Add File&hellip;<span class="mi-kbd">text context</span></button>
+                    <button onclick="pickImages()">Add Image&hellip;<span class="mi-kbd">vision</span></button>
+                    <div class="pop-sep"></div>
                     <div class="pop-label">Context</div>
                     <button onclick="addChip('workspace')">Workspace root</button>
                     <button onclick="addChip('rules')">Follow repo conventions</button>
                     <button onclick="addChip('nochange')">Read-only: do not modify files</button>
                     <button onclick="togglePlus(event); openSettings('agent')">Model + step limit...</button>
                   </div>
+                  <input type="file" id="filePick" multiple style="display:none" onchange="onFilesPicked(event)">
+                  <input type="file" id="imgPick" accept="image/png,image/jpeg,image/gif,image/webp" multiple style="display:none" onchange="onImagesPicked(event)">
                 </div>
                 <div class="mode-toggle" id="modeToggle">
                   <button data-mode="agent" class="active" title="Full autonomy: read, write and run commands">Agent</button>
@@ -1020,9 +1065,9 @@
                 <input class="model-input" id="modelInput" list="modelList" spellcheck="false" title="Model - saved to config on change">
                 <datalist id="modelList">
                   <option value="deepseek-flash"></option>
-                  <option value="deepseek-chat"></option>
-                  <option value="deepseek-reasoner"></option>
+                  <option value="deepseek-v4-pro"></option>
                 </datalist>
+                <span class="hint-mini" id="visionHint" style="display:none"></span>
                 <span class="hint-mini" id="kbdHint">Enter to send</span>
                 <button class="send-btn" id="sendBtn" onclick="handleSendClick()" title="Send (Enter)">
                   <svg id="sendIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>
@@ -1206,9 +1251,35 @@
             </div>
           </div>
 
+          <div class="sw-field">
+            <label class="lbl" for="cfg-idle">Idle timeout (seconds)</label>
+            <input type="number" id="cfg-idle" min="10" max="1800" step="10">
+            <div class="key-hint">A run that produces no output for this long is treated as stuck and cancelled. Allowed range: 10-1800.</div>
+            <div class="step-picks">
+              <span class="pref-hint" style="margin:0 2px 0 0">Common values</span>
+              <button onclick="setIdle(60)">60</button>
+              <button onclick="setIdle(120)">120</button>
+              <button onclick="setIdle(300)">300</button>
+              <button onclick="setIdle(600)">600</button>
+            </div>
+          </div>
+
+          <div class="sw-field">
+            <label class="lbl" for="cfg-runlimit">Task time limit (minutes)</label>
+            <input type="number" id="cfg-runlimit" min="1" max="240" step="1">
+            <div class="key-hint">Wall-clock cap for one task, however busy it looks. Allowed range: 1-240.</div>
+            <div class="step-picks">
+              <span class="pref-hint" style="margin:0 2px 0 0">Common values</span>
+              <button onclick="setRunLimit(5)">5</button>
+              <button onclick="setRunLimit(25)">25</button>
+              <button onclick="setRunLimit(60)">60</button>
+              <button onclick="setRunLimit(120)">120</button>
+            </div>
+          </div>
+
           <div class="sw-card">
             <h5><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg> Run watchdog</h5>
-            <p>The server watches every run. A task that produces no output for <b>2 minutes</b>, or that runs longer than <b>25 minutes</b>, is cancelled automatically and the busy flag is released. The Stop button escalates on its own if a run will not unwind.</p>
+            <p>The server watches every run. A task that produces no output for <b id="wdIdle">2 minutes</b>, or that runs longer than <b id="wdRun">25 minutes</b>, is cancelled automatically and the busy flag is released. Both numbers are the fields above; the Stop button escalates on its own if a run will not unwind.</p>
           </div>
         </section>
 
@@ -1271,12 +1342,14 @@
           <h4>Safety</h4>
           <div class="sw-desc">How much the agent is allowed to do without stopping to ask.</div>
 
-          <div class="perm-row">
-            <input type="checkbox" id="cfg-auto-approve" onchange="onAutoApproveToggle(this)">
-            <div>
-              <label class="perm-label" for="cfg-auto-approve">Always Allow tool execution</label>
-              <div class="perm-warn">&#9888; <b>Dangerous.</b> Ordinary approval prompts are skipped: <code>run_shell</code> and <code>write_file</code> run unattended until you turn this back off. Commands flagged as dangerous still stop and ask - this switch can never approve those.</div>
+          <div class="sw-card">
+            <h5><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg> Always Allow</h5>
+            <p>The switch the approval card offers, kept in one place. It applies the moment you click it - no Save needed - and stays on until you turn it off here.</p>
+            <div class="sw-actions">
+              <button class="btn-always" id="alwaysBtn" onclick="applyAlwaysAllow()">Always Allow</button>
+              <span class="pref-hint" id="alwaysState" style="margin:0">Off - every mutating call asks first.</span>
             </div>
+            <div class="perm-warn">&#9888; <b>Dangerous.</b> Ordinary approval prompts are skipped: <code>run_shell</code> and <code>write_file</code> run unattended. Commands flagged as dangerous still stop and ask - this switch can never approve those, and it is ignored in Plan mode.</div>
           </div>
 
           <div class="sw-sep"></div>
@@ -1489,6 +1562,11 @@ const state = {
   sessions: [],
   activeId: null,
   chips: [],
+  // Attachments for the next task only. files are text the user added as
+  // context; images are pictures the vision model will see. Neither is persisted:
+  // a base64 screenshot in localStorage would blow the quota in one session.
+  files: [],
+  images: [],
   userScrolledUp: false,
   onb: loadOnb(),
   // run supervision: a status poller that notices a stalled run, and the
@@ -1634,6 +1712,15 @@ function clock(ms) {
   return m + ':' + String(t % 60).padStart(2, '0');
 }
 
+// fmtSpan renders a duration in seconds as the shortest honest text: seconds
+// under a minute, whole minutes when it divides evenly, otherwise one decimal.
+function fmtSpan(sec) {
+  sec = Math.max(0, Math.round(sec));
+  if (sec < 60) return sec + (sec === 1 ? ' second' : ' seconds');
+  const m = sec / 60;
+  return (m % 1 === 0 ? String(m) : m.toFixed(1)) + (m === 1 ? ' minute' : ' minutes');
+}
+
 function truncate(s, n) {
   s = String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
   return s.length > n ? s.slice(0, n - 1) + '\u2026' : s;
@@ -1689,14 +1776,77 @@ function copyText(text) {
   } else { fallback(); }
 }
 
+// One glyph per message action. Copy is a clipboard, the pencil edits, the
+// arrow that leaves the page re-sends, the circular arrow runs the task again,
+// the chevron keeps the agent going, and the angle brackets mean raw Markdown.
+const ACT_ICONS = {
+  copy: '<rect x="9" y="9" width="12" height="12" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h8"></path>',
+  edit: '<path d="M12 20h9"></path><path d="M16.6 3.6a2.1 2.1 0 0 1 3 3L7.5 18.7 3 20l1.3-4.5z"></path>',
+  resend: '<path d="M14 5h5v5"></path><path d="M19 5l-7.5 7.5a4 4 0 0 0-1.2 2.8V20"></path>',
+  retry: '<path d="M20.5 12a8.5 8.5 0 1 1-2.6-6.1"></path><polyline points="21 3 21 8 16 8"></polyline>',
+  cont: '<path d="M4 12h14"></path><polyline points="12 6 18 12 12 18"></polyline>',
+  markdown: '<polyline points="15 5 21 12 15 19"></polyline><polyline points="9 5 3 12 9 19"></polyline>'
+};
+
+function actIcon(name) {
+  return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+    'stroke-linecap="round" stroke-linejoin="round">' + (ACT_ICONS[name] || '') + '</svg>';
+}
+
+// msgActions appends the hover toolbar to a message head. `acts` is a list of
+// { icon, title, run }; the row is inert until the message is hovered or one of
+// its buttons is focused, so a long transcript stays readable.
+function msgActions(head, acts) {
+  if (!head) return null;
+  const wrap = document.createElement('div');
+  wrap.className = 'msg-acts';
+  acts.forEach((act) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.title = act.title;
+    b.setAttribute('aria-label', act.title);
+    b.innerHTML = actIcon(act.icon);
+    b.onclick = (e) => { e.stopPropagation(); act.run(); };
+    wrap.append(b);
+  });
+  head.append(wrap);
+  return wrap;
+}
+
+// editMessage loads a sent line back into the composer instead of resending it
+// blind: what follows is the run the user actually edited.
+function editMessage(text) {
+  if (state.generating) { toast('Stop the agent before editing a message.', 'warn'); return; }
+  el.input.value = text;
+  autoGrow();
+  focusComposer();
+  toast('Loaded into the composer - edit it, then press Enter.');
+}
+
+// sendAgain repeats one message as a new turn. The transcript keeps both
+// attempts, which is what makes a retry comparable to the first run.
+function sendAgain(sess, text) {
+  if (!sess) return;
+  if (state.generating) { toast('Stop the agent before starting another task.', 'warn'); return; }
+  dispatchTask(sess, text);
+}
+
+// retryLastTask re-sends the newest user message of the thread it was called
+// from, not of whichever session happens to be active.
+function retryLastTask(sess) {
+  const rows = sess ? sess.thread.querySelectorAll('.msg.user .bubble') : [];
+  if (!rows.length) { toast('There is no task to run again.', 'warn'); return; }
+  sendAgain(sess, rows[rows.length - 1].innerText);
+}
+
 /* ------------------------------------------------------------------ */
 /* sessions                                                           */
 /* ------------------------------------------------------------------ */
 const HERO_HTML = `
   <div class="hero">
-    <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round">
-      <path d="M12 2.5 21 7.5v9L12 21.5 3 16.5v-9z"></path>
-      <path d="M12 2.5v19M3 7.5l9 5 9-5"></path>
+    <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 2.6 20.4 7.4v9.2L12 21.4 3.6 16.6V7.4z"></path>
+      <path d="M8.2 8.7l3.5 3.3-3.5 3.3M13.3 15.3h2.8" stroke-width="1.5"></path>
     </svg>
     <h1>dsagent: the AI code agent</h1>
     <div class="sub">Describe a task. The agent reads your workspace, edits files and runs real commands, then reports back - all locally, with your key.</div>
@@ -2146,33 +2296,45 @@ function railNodes(thread) {
     const side = child.querySelector(':scope > .mside');
     const av = side ? side.getBoundingClientRect() : null;
     // Both markers are centres: the avatar is a real box (measure it), the dot
-    // is a ::after of 12px at left:-31px / top:13px against the entry's PADDING
-    // box - hence clientLeft, without which every bordered card (tool cards,
-    // approvals, errors) pulled the line 1px off its own circle.
-    const dotX = r.left + (child.clientLeft || 0) - 25;
+    // is a ::after of 12px + a 2px border = 16px at left:-33px / top:13px
+    // against the entry's PADDING box - hence clientLeft, without which every
+    // bordered card (tool cards, approvals, errors) pulled the line 1px off its
+    // own circle.
+    const edge = r.left + (child.clientLeft || 0);
     nodes.push({
-      x: (av ? av.left + av.width / 2 : dotX) - base.left,
-      y: (av ? av.top + av.height / 2 : r.top + 19) - base.top
+      x: (av ? av.left + av.width / 2 : edge - 25) - base.left,
+      y: (av ? av.top + av.height / 2 : r.top + 19) - base.top,
+      // ex is the entry's own left edge: where its stub has to end, on the
+      // inside of a card's border, so the rail touches the message itself.
+      ex: edge - base.left
     });
   });
   return nodes;
 }
 
-// railSegment is the algorithm: from one node to the next, go down, jog to the
-// side, keep going down, then come back. Alternating the side per segment is
-// what makes the rail a zig-zag rather than a ruler. Short hops stay straight,
-// because a jog in 20px of space just looks like a glitch.
-function railSegment(x, y1, y2, dir) {
-  const h = y2 - y1;
-  if (h < 26) return 'M' + x + ' ' + y1 + 'L' + x + ' ' + y2;
-  // A short straight run at each end, so the line always leaves and enters a
-  // circle vertically: a jog that starts right at the node looks like the dot
-  // was pinned to the side of the rail instead of threaded onto it.
-  const stub = Math.min(Math.max(h * 0.28, 9), h / 2 - 1);
-  const amp = (Math.min(7, Math.max(3.5, h * 0.11)) * dir).toFixed(2);
-  const a = (y1 + stub).toFixed(2);
-  const b = (y2 - stub).toFixed(2);
-  return 'M' + x + ' ' + y1 + 'V' + a + 'H' + (x + Number(amp)) + 'V' + b + 'H' + x + 'V' + y2;
+// railSegment is the vertical connector: one straight run from a node to the
+// next, at that node's own x. A hop between two nodes has to stay vertical, or
+// it reads as the line drifting beside the circles instead of threading
+// through them.
+function railSegment(x, y1, y2) {
+  return 'M' + x + ' ' + y1 + 'L' + x + ' ' + y2;
+}
+
+// railStub is the horizontal reach of one node: from the circle's centre out to
+// the left edge of that node's own entry, so every message is attached to the
+// rail instead of floating beside it. The half inside the circle is hidden
+// under the circle's own opaque fill.
+function railStub(x, y, ex) {
+  return 'M' + x + ' ' + y + 'L' + ex + ' ' + y;
+}
+
+// railPath wraps a path string in a <path> element for the layer; stubs are
+// separated so they can carry their own flat line cap.
+function railPath(d, cls) {
+  const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  if (cls) p.setAttribute('class', cls);
+  p.setAttribute('d', d);
+  return p;
 }
 
 // paintRail redraws the whole layer from measured geometry. It is cheap and
@@ -2187,18 +2349,22 @@ function paintRail(thread) {
     svg.setAttribute('aria-hidden', 'true');
     thread.prepend(svg);
   }
-  const sig = nodes.map((n) => Math.round(n.x) + ',' + Math.round(n.y)).join(';') + '|' + thread.clientHeight;
+  const sig = nodes.map((n) => Math.round(n.x) + ',' + Math.round(n.y) + ',' + Math.round(n.ex)).join(';') + '|' + thread.clientHeight;
   if (svg._sig === sig) return;
   svg._sig = sig;
   while (svg.firstChild) svg.removeChild(svg.firstChild);
-  if (nodes.length < 2) return;
   let d = '';
+  let stubs = '';
   for (let i = 0; i < nodes.length - 1; i++) {
-    d += railSegment(nodes[i].x, nodes[i].y, nodes[i + 1].y, i % 2 ? 1 : -1);
+    d += railSegment(nodes[i].x, nodes[i].y, nodes[i + 1].y);
   }
-  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  path.setAttribute('d', d);
-  svg.append(path);
+  // One stub per entry, even on its own: a lone step still gets its link to
+  // the rail, which is why this no longer needs two nodes to draw anything.
+  nodes.forEach((n) => {
+    if (n.ex > n.x) stubs += railStub(n.x, n.y, n.ex);
+  });
+  if (d) svg.append(railPath(d));
+  if (stubs) svg.append(railPath(stubs, 'stubs'));
 }
 
 // Repaints are coalesced into one animation frame: streaming tokens and
@@ -2270,7 +2436,7 @@ function clearHero(sess) {
   if (hero) hero.remove();
 }
 
-function addUserMsg(sess, text) {
+function addUserMsg(sess, text, images) {
   clearHero(sess);
   const row = document.createElement('div');
   row.className = 'msg user';
@@ -2278,16 +2444,60 @@ function addUserMsg(sess, text) {
   row.innerHTML =
     '<div class="mside"><span class="ava user">Y</span></div>' +
     '<div class="mbody">' +
-      '<div class="msg-head"><span class="who">You</span><span class="ts">' + fmtTime() + '</span><button class="mini-act">copy</button></div>' +
+      '<div class="msg-head"><span class="who">You</span><span class="ts">' + fmtTime() + '</span></div>' +
       '<div class="bubble user"></div>' +
     '</div>';
-  row.querySelector('.bubble').textContent = text;
-  row.querySelector('.mini-act').onclick = () => copyText(text);
+  const bubble = row.querySelector('.bubble');
+  bubble.textContent = text;
+  // The pictures this task carries, shown inline so the transcript records what
+  // the model was actually given. They are not written to localStorage: one
+  // base64 screenshot would eat the whole quota.
+  if (images && images.length) {
+    const strip = document.createElement('div');
+    strip.className = 'u-imgs';
+    images.forEach((im) => {
+      const img = document.createElement('img');
+      img.src = im.data;
+      img.alt = im.name || 'attached image';
+      img.title = im.name || '';
+      strip.append(img);
+    });
+    bubble.append(strip);
+  }
+  msgActions(row.querySelector('.msg-head'), [
+    { icon: 'copy', title: 'Copy this message', run: () => copyText(text) },
+    { icon: 'edit', title: 'Edit and resend - loads it back into the composer', run: () => editMessage(text) },
+    { icon: 'resend', title: 'Send this message again', run: () => sendAgain(sess, text) }
+  ]);
   sess.thread.append(row);
   sess.messages++;
   logRecord(sess, { k: 'user', t: text, ts: row.querySelector('.msg-head .ts').textContent });
   scrollToBottom();
   return row;
+}
+
+// addShotCard shows a picture the agent captured. Clicking toggles between the
+// thumbnail and the full-size view; nothing leaves the page either way.
+function addShotCard(sess, dataUrl) {
+  clearHero(sess);
+  const row = document.createElement('div');
+  row.className = 'msg agent';
+  row.innerHTML =
+    '<div class="mside"><span class="ava">d</span></div>' +
+    '<div class="mbody"><div class="shot-card">' +
+      '<div class="shot-head">screen the agent captured</div>' +
+    '</div></div>';
+  const img = document.createElement('img');
+  img.src = dataUrl;
+  img.alt = 'screenshot captured by the agent';
+  img.onclick = () => {
+    const open = img.style.maxHeight === 'none';
+    img.style.maxHeight = open ? '340px' : 'none';
+    img.style.cursor = open ? 'zoom-in' : 'zoom-out';
+  };
+  row.querySelector('.shot-card').append(img);
+  sess.thread.append(row);
+  scrollToBottom();
 }
 
 function addAgentMsg(sess) {
@@ -2296,11 +2506,17 @@ function addAgentMsg(sess) {
   row.innerHTML =
     '<div class="mside"><span class="ava">d</span></div>' +
     '<div class="mbody">' +
-      '<div class="msg-head"><span class="who">dsagent</span><span class="ts">' + fmtTime() + '</span><button class="mini-act">copy</button></div>' +
+      '<div class="msg-head"><span class="who">dsagent</span><span class="ts">' + fmtTime() + '</span></div>' +
       '<div class="bubble agent"><div class="thinking">Thinking<span class="dots"><i></i><i></i><i></i></span></div></div>' +
     '</div>';
   const bubble = row.querySelector('.bubble.agent');
-  row.querySelector('.mini-act').onclick = () => copyText(bubble.innerText);
+  // Read at click time, not now: the bubble keeps growing while it streams.
+  msgActions(row.querySelector('.msg-head'), [
+    { icon: 'copy', title: 'Copy the response', run: () => copyText(bubble.innerText) },
+    { icon: 'markdown', title: 'Copy the response as Markdown', run: () => copyText(bubble._raw || bubble.innerText) },
+    { icon: 'cont', title: 'Ask the agent to continue', run: () => continueAgent(sess) },
+    { icon: 'retry', title: 'Run the last task again', run: () => retryLastTask(sess) }
+  ]);
   sess.thread.append(row);
   scrollToBottom();
   return bubble;
@@ -2723,7 +2939,7 @@ function stopTimer(sess) {
   if (state.activeId === sess.id) paintStats();
 }
 
-async function streamTask(sess, task) {
+async function streamTask(sess, task, images) {
   // Captured up front: the user may switch modes while the run is in flight, and
   // the request - plus the plan hand-off afterwards - belongs to this run.
   const runMode = state.mode;
@@ -2774,7 +2990,7 @@ async function streamTask(sess, task) {
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ task: task, mode: runMode }),
+      body: JSON.stringify({ task: task, mode: runMode, images: images || [] }),
       signal: ctl.signal
     });
 
@@ -2832,6 +3048,12 @@ async function streamTask(sess, task) {
           toolRow = null;
           // The step is done; the model is composing the next one.
           setLive(sess, 'think', failed ? 'Thinking about the error' : 'Thinking');
+        } else if (ev.type === 'image') {
+          // A picture the agent captured itself. It is shown, not stored: base64
+          // in localStorage would blow the quota in one session.
+          dropEmptyBubble();
+          bubble = null;
+          addShotCard(sess, ev.text);
         } else if (ev.type === 'error') {
           dropEmptyBubble();
           bubble = null;
@@ -3051,9 +3273,22 @@ function dispatchTask(sess, text) {
   if (state.generating) { toast('Stop the agent before starting another task.', 'warn'); return; }
 
   const ctx = state.chips.map((c) => CHIP_TEXT[c]).filter(Boolean);
-  const payload = (ctx.length ? ctx.join('\n') + '\n\n' : '') + text;
+  // Attachments belong to this task only: they are taken out of the composer
+  // here, so a "retry" or a follow-up task cannot silently resend a screenshot
+  // the user has moved on from.
+  const files = fileContext();
+  const images = state.images.slice();
+  if (images.length && /v4-pro|reasoner/i.test(el.modelInput.value || '')) {
+    toast('This model cannot see images. Switch to deepseek-flash, or remove them.', 'warn');
+    return;
+  }
+  const parts = [];
+  if (ctx.length) parts.push(ctx.join('\n'));
+  if (files) parts.push(files);
+  parts.push(text);
+  const payload = parts.join('\n\n') + '\n';
 
-  addUserMsg(sess, text);
+  addUserMsg(sess, text, images);
   if (sess.messages === 1) {
     sess.title = truncate(text, 44) || 'Session';
     el.sessionTitle.textContent = sess.title;
@@ -3061,10 +3296,13 @@ function dispatchTask(sess, text) {
     queueChatSave();
   }
   state.chips = [];
+  state.files = [];
+  state.images = [];
   renderChips();
+  refreshModelVisionHint();
   if (state.onb.task !== true) markOnb('task');
 
-  streamTask(sess, payload);
+  streamTask(sess, payload, images.map((im) => ({ name: im.name, data: im.data })));
 }
 
 /* --- plan / ask hand-off ------------------------------------------- */
@@ -3164,8 +3402,8 @@ function runCommandTask() {
     'that failed and suggest the fix:\n\n' + cmd, 'agent');
 }
 
-function continueAgent() {
-  const sess = activeSession();
+function continueAgent(onSess) {
+  const sess = onSess || activeSession();
   if (!sess || sess.archived) { toast('Start a new session first.', 'warn'); return; }
   if (state.generating) { toast('The agent is already working.', 'warn'); return; }
   addUserMsg(sess, 'continue');
@@ -3192,19 +3430,174 @@ function addChip(key) {
   el.input.focus();
 }
 
+/* --- attachments: files and images --------------------------------- */
+
+// Limits mirror the server's (vision.go). Checking here means a 40 MB video gets
+// a toast instead of a 400 after the upload has already happened.
+const ATTACH_LIMITS = {
+  fileBytes: 256 * 1024,        // one text file added as context
+  filesTotalBytes: 512 * 1024,  // all files on one task
+  files: 6,
+  imageBytes: 10 * 1024 * 1024,
+  images: 8,
+  imageTypes: ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
+};
+
+// A file is added as text context, so only what can be read as text is offered.
+// The extension list is a hint for the picker; the real check is on the content.
+function isProbablyText(name, type) {
+  if (type && type.startsWith('text/')) return true;
+  if (/^image\//i.test(type || '')) return false;
+  return /\.(txt|md|markdown|json|jsonl|csv|tsv|log|ya?ml|toml|ini|cfg|conf|env|xml|html?|css|scss|js|jsx|ts|tsx|mjs|cjs|py|rb|go|rs|java|kt|c|h|cpp|hpp|cs|php|sh|ps1|bat|cmd|sql|gitignore|dockerfile|makefile|mod|sum|lock)$/i.test(name)
+    || /^(dockerfile|makefile|license|readme)$/i.test(name);
+}
+
+function refreshModelVisionHint() {
+  const hint = document.getElementById('visionHint');
+  if (!hint) return;
+  const vision = !/v4-pro|reasoner/i.test(el.modelInput.value || '');
+  hint.textContent = state.images.length && !vision ? 'this model cannot see images' : '';
+  hint.style.display = hint.textContent ? 'inline' : 'none';
+}
+
+function pickFiles() {
+  document.getElementById('plusPop').classList.remove('open');
+  document.getElementById('filePick').click();
+}
+
+function pickImages() {
+  document.getElementById('plusPop').classList.remove('open');
+  if (state.images.length >= ATTACH_LIMITS.images) {
+    toast('At most ' + ATTACH_LIMITS.images + ' images per task.', 'warn');
+    return;
+  }
+  document.getElementById('imgPick').click();
+}
+
+function onFilesPicked(ev) {
+  const input = ev.target;
+  const files = Array.from(input.files || []);
+  input.value = '';
+  let total = state.files.reduce((n, f) => n + f.text.length, 0);
+  let pending = files.length;
+
+  files.forEach((f) => {
+    if (state.files.length >= ATTACH_LIMITS.files) { toast('At most ' + ATTACH_LIMITS.files + ' files per task.', 'warn'); done(); return; }
+    if (!isProbablyText(f.name, f.type)) { toast(f.name + ' does not look like a text file.', 'warn'); done(); return; }
+    if (f.size > ATTACH_LIMITS.fileBytes) { toast(f.name + ' is larger than ' + Math.round(ATTACH_LIMITS.fileBytes / 1024) + ' KB.', 'warn'); done(); return; }
+    if (total + f.size > ATTACH_LIMITS.filesTotalBytes) { toast('The selected files are over the ' + Math.round(ATTACH_LIMITS.filesTotalBytes / 1024) + ' KB limit.', 'warn'); done(); return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = String(reader.result || '');
+      if (!text.trim()) { toast(f.name + ' is empty.', 'warn'); done(); return; }
+      if (!state.files.some((x) => x.name === f.name && x.size === f.size)) {
+        total += text.length;
+        state.files.push({ name: f.name, size: f.size, text: text });
+        renderChips();
+        el.input.focus();
+      }
+      done();
+    };
+    reader.onerror = () => { toast('Could not read ' + f.name + '.', 'warn'); done(); };
+    reader.readAsText(f);
+  });
+  if (!pending) renderChips();
+
+  function done() { pending--; if (pending <= 0) renderChips(); }
+}
+
+function onImagesPicked(ev) {
+  const input = ev.target;
+  const files = Array.from(input.files || []);
+  input.value = '';
+  let pending = files.length;
+  const done = () => { pending--; if (pending <= 0) { renderChips(); refreshModelVisionHint(); } };
+
+  files.forEach((f) => {
+    if (state.images.length >= ATTACH_LIMITS.images) { toast('At most ' + ATTACH_LIMITS.images + ' images per task.', 'warn'); done(); return; }
+    const type = (f.type || '').toLowerCase();
+    if (ATTACH_LIMITS.imageTypes.indexOf(type) < 0) {
+      toast(f.name + ': only PNG, JPEG, GIF and WebP images can be sent.', 'warn');
+      done();
+      return;
+    }
+    if (f.size > ATTACH_LIMITS.imageBytes) {
+      toast(f.name + ' is larger than ' + Math.round(ATTACH_LIMITS.imageBytes / (1024 * 1024)) + ' MB.', 'warn');
+      done();
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const data = String(reader.result || '');
+      if (data.indexOf('data:') !== 0) { toast('Could not read ' + f.name + '.', 'warn'); done(); return; }
+      state.images.push({ name: f.name, size: f.size, data: data });
+      done();
+    };
+    reader.onerror = () => { toast('Could not read ' + f.name + '.', 'warn'); done(); };
+    reader.readAsDataURL(f);
+  });
+  if (!pending) { renderChips(); refreshModelVisionHint(); }
+}
+
+function removeFileAt(i) {
+  state.files.splice(i, 1);
+  renderChips();
+}
+
+function removeImageAt(i) {
+  state.images.splice(i, 1);
+  renderChips();
+  refreshModelVisionHint();
+}
+
+function chipShell(label) {
+  const c = document.createElement('span');
+  c.className = 'chip-x';
+  c.innerHTML = '<span></span><button title="Remove">&times;</button>';
+  c.querySelector('span').textContent = label;
+  return c;
+}
+
 function renderChips() {
   el.chips.innerHTML = '';
+
+  state.files.forEach((f, i) => {
+    const c = chipShell('');
+    const span = c.querySelector('span');
+    const kind = document.createElement('span');
+    kind.className = 'chip-kind';
+    kind.textContent = 'file';
+    span.append(kind, document.createTextNode(' ' + f.name));
+    c.querySelector('button').onclick = () => removeFileAt(i);
+    el.chips.append(c);
+  });
+
+  state.images.forEach((im, i) => {
+    const c = chipShell('');
+    const span = c.querySelector('span');
+    const img = document.createElement('img');
+    img.src = im.data;
+    img.alt = im.name;
+    span.append(img, document.createTextNode(' ' + im.name));
+    c.querySelector('button').onclick = () => removeImageAt(i);
+    el.chips.append(c);
+  });
+
   state.chips.forEach((k) => {
-    const c = document.createElement('span');
-    c.className = 'chip-x';
-    c.innerHTML = '<span></span><button title="Remove">&times;</button>';
-    c.querySelector('span').textContent = CHIP_LABEL[k] || k;
+    const c = chipShell(CHIP_LABEL[k] || k);
     c.querySelector('button').onclick = () => {
       state.chips = state.chips.filter((x) => x !== k);
       renderChips();
     };
     el.chips.append(c);
   });
+}
+
+// fileContext is the text of the attached files, framed so the model knows where
+// each block starts and ends and does not mistake it for the task itself.
+function fileContext() {
+  if (!state.files.length) return '';
+  return state.files.map((f) => '[file: ' + f.name + ']\n```\n' + f.text + '\n```\n[/file: ' + f.name + ']').join('\n\n');
 }
 
 function togglePlus(e) {
@@ -3235,7 +3628,10 @@ function loadMode() {
 function clearComposer() {
   el.input.value = '';
   state.chips = [];
+  state.files = [];
+  state.images = [];
   renderChips();
+  refreshModelVisionHint();
   autoGrow();
   el.input.focus();
 }
@@ -3283,6 +3679,7 @@ function paintKeyState(c) {
 function applyConfig(c) {
   state.config = c;
   el.modelInput.value = c.model || '';
+  refreshModelVisionHint();
   $('#sbModel').textContent = c.model || 'model: -';
   $('#kvModel').textContent = c.model || '-';
   $('#aboutModel').textContent = c.model || '-';
@@ -3301,6 +3698,7 @@ function applyConfig(c) {
   $('#noteWorkdir').textContent = c.workdir || 'the workspace';
   $('#kvApprovals').textContent = c.auto_approve ? 'always allow' : 'ask';
   setAutoBadge(!!c.auto_approve);
+  paintWatchdog(c);
   renderOnboarding();
 }
 
@@ -3345,7 +3743,7 @@ function openSettings(section) {
     $('#cfg-model').value = c.model || 'deepseek-flash';
     $('#cfg-workdir').value = c.workdir || '';
     $('#cfg-maxsteps').value = c.max_steps || 25;
-    $('#cfg-auto-approve').checked = !!c.auto_approve;
+    paintWatchdog(c);
     state.autoAtOpen = !!c.auto_approve;
     paintKeyState(c);
     showCfgError('');
@@ -3370,16 +3768,51 @@ function setSteps(n) {
   markSettingsDirty(true);
 }
 
+function setIdle(n) {
+  const field = $('#cfg-idle');
+  if (!field) return;
+  field.value = String(n);
+  markSettingsDirty(true);
+}
+
+function setRunLimit(n) {
+  const field = $('#cfg-runlimit');
+  if (!field) return;
+  field.value = String(n);
+  markSettingsDirty(true);
+}
+
+// paintWatchdog shows the timers the server actually enforces: the fields are
+// the input, the Run watchdog card is the same numbers in words.
+function paintWatchdog(c) {
+  const idleSec = c.idle_timeout_sec || 120;
+  const runMin = c.run_timeout_min || 25;
+  const idle = $('#cfg-idle');
+  const run = $('#cfg-runlimit');
+  if (idle) idle.value = String(idleSec);
+  if (run) run.value = String(runMin);
+  const wdIdle = $('#wdIdle');
+  const wdRun = $('#wdRun');
+  if (wdIdle) wdIdle.textContent = fmtSpan(idleSec);
+  if (wdRun) wdRun.textContent = fmtSpan(runMin * 60);
+}
+
 function saveConfig() {
   const key = $('#cfg-key').value.trim();
   const steps = parseInt($('#cfg-maxsteps').value, 10);
+  const idleSec = parseInt($('#cfg-idle').value, 10);
+  const runMin = parseInt($('#cfg-runlimit').value, 10);
   const body = {
     model: $('#cfg-model').value.trim(),
-    auto_approve: $('#cfg-auto-approve').checked
+    // Always Allow is applied by its own button, so the server value is the
+    // truth here rather than a checkbox this form would have to mirror.
+    auto_approve: !!(state.config && state.config.auto_approve)
   };
   const wd = $('#cfg-workdir').value.trim();
   if (wd) body.workdir = wd;
   if (!isNaN(steps) && steps > 0) body.max_steps = steps;
+  if (!isNaN(idleSec) && idleSec > 0) body.idle_timeout_sec = idleSec;
+  if (!isNaN(runMin) && runMin > 0) body.run_timeout_min = runMin;
   // Omitted entirely when blank: an empty field means "keep the current key".
   if (key) body.api_key = key;
 
@@ -3460,13 +3893,14 @@ function setAutoBadge(on) {
   $('#autoBanner').style.display = on ? 'flex' : 'none';
   $('#sbAuto').style.display = on ? 'inline-flex' : 'none';
   $('#kvApprovals').textContent = on ? 'always allow' : 'ask';
+  paintAlwaysAllow(on);
 }
 
 function confirmAlwaysAllow() {
   return confirm(
     'WARNING - Always Allow is dangerous.\n\n' +
     'The agent will execute shell commands and write files WITHOUT asking you again, ' +
-    'until you switch this off in Tool settings.\n\n' +
+    'until you switch it off in Settings > Safety.\n\n' +
     'Commands flagged as dangerous (recursive deletes, disk/registry changes, ' +
     'git push --force, credential access...) still stop and ask you, and still ' +
     'need the typed confirmation.\n\n' +
@@ -3474,8 +3908,56 @@ function confirmAlwaysAllow() {
   );
 }
 
-function onAutoApproveToggle(input) {
-  if (input.checked && !confirmAlwaysAllow()) input.checked = false;
+// paintAlwaysAllow keeps the Safety button and its one-line state readout in
+// step with the server's answer, so the pane never claims a posture the server
+// does not have.
+function paintAlwaysAllow(on) {
+  const btn = $('#alwaysBtn');
+  if (btn) {
+    btn.textContent = on ? 'Turn off Always Allow' : 'Always Allow';
+    btn.classList.toggle('on', !!on);
+    btn.title = on
+      ? 'Applies immediately - stops skipping approval prompts'
+      : 'Applies immediately - skips ordinary approval prompts';
+  }
+  const note = $('#alwaysState');
+  if (note) {
+    note.textContent = on
+      ? 'ON - run_shell and write_file run unattended. Dangerous calls still ask.'
+      : 'Off - every mutating call asks first.';
+  }
+}
+
+// applyAlwaysAllow is the button form of the switch: it saves on click instead
+// of on Save, because a posture you have to remember to save is a posture the
+// approval card would then contradict. Turning it on goes through the same
+// warning the card uses; turning it off never needs one.
+function applyAlwaysAllow() {
+  const on = !(state.config && state.config.auto_approve);
+  if (on && !confirmAlwaysAllow()) return;
+  const btn = $('#alwaysBtn');
+  if (btn) btn.disabled = true;
+  fetch('/api/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ auto_approve: on })
+  })
+    .then((r) => r.json().then((d) => ({ ok: r.ok, d: d })))
+    .then((out) => {
+      if (btn) btn.disabled = false;
+      if (!out.ok) { showCfgError(out.d.error || 'Could not change Always Allow.'); return; }
+      applyConfig(out.d);
+      state.autoAtOpen = !!out.d.auto_approve;
+      markOnb('safety');
+      showCfgError('');
+      toast(out.d.auto_approve
+        ? 'Always Allow is ON - approvals are skipped.'
+        : 'Always Allow is off - every mutating call asks again.', out.d.auto_approve ? 'warn' : 'info');
+    })
+    .catch(() => {
+      if (btn) btn.disabled = false;
+      showCfgError('Could not reach dsagent.');
+    });
 }
 
 /* ------------------------------------------------------------------ */
@@ -3755,6 +4237,7 @@ document.addEventListener('click', (e) => {
   el.input.focus();
 });
 
+el.modelInput.addEventListener('input', refreshModelVisionHint);
 el.modelInput.addEventListener('change', () => {
   const m = el.modelInput.value.trim();
   if (!m) return;
@@ -3783,7 +4266,7 @@ $('#settingsOverlay').addEventListener('keydown', (e) => {
 });
 // Only the fields that need a Save are tracked: the Interface toggles apply
 // the moment they are clicked and must not claim to be unsaved.
-['#cfg-key', '#cfg-model', '#cfg-workdir', '#cfg-maxsteps', '#cfg-auto-approve'].forEach((sel) => {
+['#cfg-key', '#cfg-model', '#cfg-workdir', '#cfg-maxsteps', '#cfg-idle', '#cfg-runlimit'].forEach((sel) => {
   const node = $(sel);
   if (!node) return;
   node.addEventListener('input', () => markSettingsDirty(true));

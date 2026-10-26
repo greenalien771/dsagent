@@ -188,6 +188,11 @@ func classifyTool(name, rawArgs string) Risk {
 		}
 		return Risk{Level: riskSafe}
 
+	case "screenshot":
+		// Not destructive, but it does hand the contents of the user's desktop to
+		// the remote model, so the approval card says exactly that.
+		return Risk{Level: riskElevated, Reasons: []string{"captures the screen and sends it to the API"}}
+
 	case "web_fetch":
 		u := strings.TrimSpace(str("url"))
 		if u == "" {
