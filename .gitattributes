@@ -1,0 +1,10 @@
+# Normalise line endings: the tree is LF, and a Windows checkout must not
+# rewrite it into a diff of every line.
+* text=auto eol=lf
+
+# Keep the bundled front-end libraries out of GitHub's language stats, diffs
+# and code search - they are third-party releases, checked by hash in
+# ui/vendor/README.md rather than by review.
+ui/vendor/** linguist-vendored
+ui/vendor/**/*.min.js -diff
+ui/vendor/**/*.min.css -diff

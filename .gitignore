@@ -1,0 +1,16 @@
+# Build output - the binary is an artifact, not source.
+/dsagent
+/dsagent.exe
+*.exe
+*.test
+*.out
+
+# Local scratch
+*.corrupt
+
+# Editors and OS junk
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini
