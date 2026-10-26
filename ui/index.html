@@ -67,7 +67,7 @@
 
     /* one transition list, so every interactive surface feels the same */
     button, .recent-item, .pal-item, .tl-item, .tab, .onb-item, .side-link, .icon-btn,
-    .menu-pop button, .pop button, .modal input, .composer-box, .card, .stat, .tool-card,
+    .menu-pop button, .pop button, .settings-win input, .composer-box, .card, .stat, .tool-card,
     .tool-head, .starter, .hero-btn, .chip, .toast, .kv, .approval .ap-btns button {
       transition: background-color .16s var(--ease), color .16s var(--ease),
                   border-color .16s var(--ease), opacity .16s var(--ease),
@@ -620,22 +620,6 @@
     }
     .overlay.open { display: flex; animation: fade .14s var(--ease); }
     @keyframes fade { from { opacity: 0; } }
-    .modal {
-      width: 100%; max-width: 500px; max-height: 88vh; overflow-y: auto;
-      background: var(--panel); border: 1px solid var(--border-2); border-radius: 12px;
-      box-shadow: 0 18px 48px rgba(0, 0, 0, .55); padding: 18px 20px;
-      animation: rise .16s var(--ease);
-    }
-    .modal h3 { font-size: 14px; font-weight: 600; margin-bottom: 3px; }
-    .modal .m-sub { font-size: 11.5px; color: var(--muted-2); margin-bottom: 15px; }
-    .modal label.lbl { display: flex; align-items: center; gap: 8px; font-size: 10px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted-2); margin: 14px 0 5px; font-weight: 600; }
-    .modal input[type="text"], .modal input[type="password"], .modal input[type="number"] {
-      width: 100%; padding: 7px 10px; font-size: 12.5px; border-radius: 6px;
-      background: var(--bg); border: 1px solid var(--border-2); outline: none;
-    }
-    .modal input:focus { border-color: var(--accent); }
-    .modal input:disabled { opacity: .55; cursor: not-allowed; }
-    .modal .input-mono { font-family: var(--mono); font-size: 11.5px; }
     .key-hint { font-size: 11px; color: var(--muted-2); line-height: 1.5; margin-top: 6px; }
     .key-hint b { color: var(--text-2); }
     .key-row { display: flex; align-items: center; gap: 10px; margin-top: 7px; flex-wrap: wrap; }
@@ -652,8 +636,6 @@
     .perm-warn b { color: var(--warn-text); }
     .perm-warn code { font-family: var(--mono); font-size: 10px; background: var(--code-bg); padding: 1px 4px; border-radius: 3px; }
     .cfg-error { display: none; margin-top: 12px; font-size: 11.5px; color: var(--danger-text); background: var(--danger-soft); border: 1px solid rgba(183, 125, 122, .26); border-radius: 6px; padding: 8px 10px; }
-    .modal-actions { display: flex; justify-content: flex-end; gap: 7px; margin-top: 18px; }
-    .modal-actions button { padding: 6px 13px; border-radius: 6px; font-size: 12px; font-weight: 550; }
     .btn-cancel { border: 1px solid var(--border-2); color: var(--text-2); }
     .btn-cancel:hover { background: var(--hover); color: var(--text); }
     .btn-save { background: var(--accent-2); color: var(--on-accent); border: 1px solid var(--accent-2); }
@@ -729,6 +711,38 @@
     .sw-foot button { padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 550; }
     .cfg-error.sw-err { margin: 0; border-radius: 0; border-left: none; border-right: none; border-top: none; }
 
+
+    /* --- shared window frame -------------------------------------------
+       Every menu that opens over the workspace is the same window: same
+       header, same scrolling body, same action bar. `.sm` / `.md` only change
+       the width; a window without a category rail simply omits the <nav>. */
+    .settings-win.sm { max-width: 520px; height: auto; max-height: 88vh; }
+    .settings-win.md { max-width: 620px; height: auto; max-height: 88vh; }
+    .settings-win.sm .sw-panes { padding: 16px 18px 20px; }
+    .sw-panes > .sw-pane.active:only-child { max-width: 100%; }
+    /* The footer note doubles as the unsaved-changes indicator. */
+    .sw-foot .note.dirty { color: var(--warn-text); }
+    .sw-pane .sw-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+    /* Preference rows: label, one-line explanation, checkbox - the same row
+       shape the Always Allow switch uses, so the panes read as one form. */
+    #sec-interface .perm-row { margin-top: 0; margin-bottom: 8px; max-width: 560px; }
+    .pref-hint { font-size: 11px; color: var(--muted); line-height: 1.5; margin-top: 4px; }
+    .pref-hint code { font-family: var(--mono); font-size: 10px; background: var(--code-bg); padding: 1px 4px; border-radius: 3px; }
+    .step-picks { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+    .step-picks button {
+      font-family: var(--mono); font-size: 10.5px; padding: 3px 9px; border-radius: 20px;
+      border: 1px solid var(--border); color: var(--muted-2);
+    }
+    .step-picks button:hover { border-color: var(--border-2); color: var(--text-2); background: var(--hover); }
+    /* The checklist retires itself; the whole feature (tab, link, menu entry)
+       is hidden through this one class. */
+    .onb-off { display: none !important; }
+    .onb-meta button { font-size: 10px; color: var(--muted-2); }
+    .onb-meta button:hover { color: var(--text-2); }
+    /* Timestamps are a class on <body>, so live and replayed transcripts follow
+       the preference without being rebuilt. */
+    body.no-ts .msg-head .ts { display: none; }
+
     /* --- danger approval --- */
     .approval.danger { border-color: rgba(183, 125, 122, .42); background: var(--danger-soft); }
     .approval.danger .ap-head { color: var(--danger-text); }
@@ -759,9 +773,13 @@
     .stall-x { color: var(--danger-text); font-size: 15px; line-height: 1; padding: 0 4px !important; }
     .stall-x:hover { color: var(--text); }
 
-    /* command palette */
-    .palette { width: 100%; max-width: 540px; background: var(--panel); border: 1px solid var(--border-2); border-radius: 10px; box-shadow: 0 18px 48px rgba(0, 0, 0, .55); overflow: hidden; align-self: flex-start; margin-top: 12vh; animation: rise .16s var(--ease); }
-    .palette input { width: 100%; padding: 12px 14px; font-size: 13px; background: transparent; border: none; border-bottom: 1px solid var(--border); outline: none; }
+    /* command palette: same window, a little wider, pinned near the top */
+    .settings-win.palette-win { max-width: 560px; height: auto; max-height: 76vh; margin-top: 12vh; }
+    .sw-head.pal-head { padding: 0 10px 0 13px; }
+    .pal-input {
+      flex: 1; min-width: 0; padding: 12px 0; font-size: 13px;
+      background: transparent; border: none; outline: none; color: var(--text);
+    }
     .pal-list { max-height: 330px; overflow-y: auto; padding: 4px; }
     .pal-item { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; padding: 7px 9px; border-radius: 5px; font-size: 12.5px; color: var(--text-2); }
     .pal-item.sel { background: var(--panel-3); color: var(--text); }
@@ -844,7 +862,7 @@
           <button onclick="focusMode()">Focus mode<span class="mi-kbd">Ctrl Shift F</span></button>
           <div class="gap"></div>
           <button onclick="showTab('activity')">Activity</button>
-          <button onclick="showTab('start')">Get started</button>
+          <button id="onbMenuItem" onclick="showTab('start')">Get started</button>
           <button onclick="openPalette()">Command palette<span class="mi-kbd">Ctrl K</span></button>
         </div>
       </div>
@@ -854,14 +872,14 @@
           <button onclick="handleSendClick()">Run task / stop agent<span class="mi-kbd">Enter</span></button>
           <button onclick="continueAgent()">Continue (say "continue")</button>
           <div class="gap"></div>
-          <button onclick="openSettings()">Approval posture...</button>
+          <button onclick="openSettings('safety')">Approval posture...</button>
         </div>
       </div>
       <div class="menu-item" data-menu="terminal">
         <button>Terminal</button>
         <div class="menu-pop">
           <button onclick="runCommandTask()">Run a command...</button>
-          <button onclick="openSettings()">Review shell permissions</button>
+          <button onclick="openSettings('safety')">Review shell permissions</button>
         </div>
       </div>
       <div class="menu-item" data-menu="help">
@@ -904,7 +922,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 12 7 12 10 4 14 20 17 12 21 12"></polyline></svg>
           Activity
         </button>
-        <button class="side-link" onclick="showTab('start')">
+        <button class="side-link" id="onbLink" onclick="showTab('start')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3 8-8"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
           Get started
         </button>
@@ -951,7 +969,7 @@
           <button class="icon-btn" title="Command palette (Ctrl K)" onclick="openPalette()">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M7 9h4M7 13h7"></path></svg>
           </button>
-          <button class="icon-btn" title="Get started checklist" onclick="showTab('start')">
+          <button class="icon-btn" id="onbBtn" title="Get started checklist" onclick="showTab('start')">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3 8-8"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
           </button>
           <button class="icon-btn" title="Activity panel (Ctrl J)" onclick="toggleRight()">
@@ -990,7 +1008,7 @@
                     <button onclick="addChip('workspace')">Workspace root</button>
                     <button onclick="addChip('rules')">Follow repo conventions</button>
                     <button onclick="addChip('nochange')">Read-only: do not modify files</button>
-                    <button onclick="togglePlus(event); openSettings()">Model + step limit...</button>
+                    <button onclick="togglePlus(event); openSettings('agent')">Model + step limit...</button>
                   </div>
                 </div>
                 <div class="mode-toggle" id="modeToggle">
@@ -1024,7 +1042,7 @@
         <div class="right-head">
           <div class="tabs">
             <button class="tab active" data-tab="activity" onclick="showTab('activity')">Activity</button>
-            <button class="tab" data-tab="start" onclick="showTab('start')">Get started</button>
+            <button class="tab" id="onbTab" data-tab="start" onclick="showTab('start')">Get started</button>
           </div>
           <button class="icon-btn" title="Hide panel (Ctrl J)" onclick="toggleRight()">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
@@ -1036,7 +1054,7 @@
             <div class="banner" id="autoBanner" style="display:none">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
               Always Allow is ON
-              <button onclick="openSettings()">Review</button>
+              <button onclick="openSettings('safety')">Review</button>
             </div>
 
             <div class="stats">
@@ -1063,7 +1081,11 @@
             <div class="card">
               <h4>Get started</h4>
               <div class="progress"><i id="onbBar" style="width:0%"></i></div>
-              <div class="onb-meta"><span id="onbCount">0 of 6 complete</span><span id="onbPct">0%</span></div>
+              <div class="onb-meta">
+                <span id="onbCount">0 of 4 complete</span>
+                <span id="onbPct">0%</span>
+                <button onclick="hideOnb()" title="Hide this checklist">hide</button>
+              </div>
             </div>
             <div class="card" style="padding:6px" id="onbList"></div>
             <div class="card">
@@ -1096,7 +1118,7 @@
   <footer class="statusbar">
     <span class="sb" id="sbConn"><span class="dot"></span><span id="sbConnText">ready</span></span>
     <button class="sb" onclick="openWorkspace()" id="sbWorkdir" title="Change workspace folder">-</button>
-    <button class="sb" onclick="openSettings()" id="sbModel" title="Change model">-</button>
+    <button class="sb" onclick="openSettings('conn')" id="sbModel" title="Change model">-</button>
     <span class="sb" id="sbMode">mode: agent</span>
     <span class="sb" id="sbSteps">steps: -</span>
     <span class="sb warn" id="sbAuto" style="display:none" title="Always Allow: approvals are skipped">
@@ -1127,7 +1149,9 @@
       <nav class="sw-nav" id="swNav">
         <button data-sec="conn" class="active" onclick="settingsSection('conn')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="7.5" cy="15.5" r="4.5"></circle><path d="M10.7 12.3 19 4l2 2-2 2 1.5 1.5-2 2L17 10l-2.3 2.3"></path></svg> Connection</button>
         <button data-sec="agent" onclick="settingsSection('agent')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="8" width="16" height="12" rx="2"></rect><path d="M12 4v4M9 14h.01M15 14h.01"></path></svg> Agent</button>
+        <button data-sec="interface" onclick="settingsSection('interface')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"></rect><line x1="3" y1="10" x2="21" y2="10"></line><line x1="9" y1="10" x2="9" y2="20"></line></svg> Interface</button>
         <button data-sec="safety" onclick="settingsSection('safety')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l7 3v6c0 4.2-2.9 7.6-7 9-4.1-1.4-7-4.8-7-9V6z"></path><path d="M9 12l2 2 4-4"></path></svg> Safety</button>
+        <button data-sec="data" onclick="settingsSection('data')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M6 6l1 14h10l1-14"></path></svg> Data</button>
         <button data-sec="about" onclick="settingsSection('about')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"></circle><line x1="12" y1="11" x2="12" y2="16"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg> About</button>
         <div class="sw-nav-foot">Everything here is stored locally on this machine and never sent to the model.</div>
       </nav>
@@ -1173,11 +1197,72 @@
             <label class="lbl" for="cfg-maxsteps">Max steps per task</label>
             <input type="number" id="cfg-maxsteps" min="1" max="200" step="1">
             <div class="key-hint">One step is one model turn. Allowed range: 1-200.</div>
+            <div class="step-picks">
+              <span class="pref-hint" style="margin:0 2px 0 0">Common values</span>
+              <button onclick="setSteps(10)">10</button>
+              <button onclick="setSteps(25)">25</button>
+              <button onclick="setSteps(50)">50</button>
+              <button onclick="setSteps(100)">100</button>
+            </div>
           </div>
 
           <div class="sw-card">
             <h5><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg> Run watchdog</h5>
             <p>The server watches every run. A task that produces no output for <b>2 minutes</b>, or that runs longer than <b>25 minutes</b>, is cancelled automatically and the busy flag is released. The Stop button escalates on its own if a run will not unwind.</p>
+          </div>
+        </section>
+
+        <!-- ----------------------------------------------------- interface -->
+        <section class="sw-pane" id="sec-interface">
+          <h4>Interface</h4>
+          <div class="sw-desc">Preferences for this browser only. They live on this machine and are never part of a request to the model.</div>
+
+          <div class="perm-row">
+            <input type="checkbox" data-pref="enter" id="pref-enter" onchange="setPref('enter', this.checked)">
+            <div>
+              <label class="perm-label" for="pref-enter">Send with Enter</label>
+              <div class="pref-hint">Off: <code>Enter</code> adds a new line and <code>Ctrl+Enter</code> sends. <code>Shift+Enter</code> always adds a line.</div>
+            </div>
+          </div>
+
+          <div class="perm-row">
+            <input type="checkbox" data-pref="ts" id="pref-ts" onchange="setPref('ts', this.checked)">
+            <div>
+              <label class="perm-label" for="pref-ts">Show timestamps</label>
+              <div class="pref-hint">The clock time next to every message in the transcript.</div>
+            </div>
+          </div>
+
+          <div class="perm-row">
+            <input type="checkbox" data-pref="follow" id="pref-follow" onchange="setPref('follow', this.checked)">
+            <div>
+              <label class="perm-label" for="pref-follow">Follow the run</label>
+              <div class="pref-hint">Keep the newest step in view while the agent works. Off: the transcript stays where you left it and the jump button appears instead.</div>
+            </div>
+          </div>
+
+          <div class="perm-row">
+            <input type="checkbox" data-pref="collapseOk" id="pref-collapse" onchange="setPref('collapseOk', this.checked)">
+            <div>
+              <label class="perm-label" for="pref-collapse">Fold tool calls that succeed</label>
+              <div class="pref-hint">A finished tool card collapses to its one-line header. Failed calls always stay open.</div>
+            </div>
+          </div>
+
+          <div class="perm-row">
+            <input type="checkbox" data-pref="leavetab" id="pref-leavetab" onchange="setPref('leavetab', this.checked)">
+            <div>
+              <label class="perm-label" for="pref-leavetab">Warn before leaving mid-run</label>
+              <div class="pref-hint">The browser asks before closing or reloading the tab while a task is running.</div>
+            </div>
+          </div>
+
+          <div class="perm-row">
+            <input type="checkbox" data-pref="chime" id="pref-chime" onchange="setPref('chime', this.checked)">
+            <div>
+              <label class="perm-label" for="pref-chime">Play a sound when a task ends</label>
+              <div class="pref-hint">One short tone, so a long run can finish in a background tab.</div>
+            </div>
           </div>
         </section>
 
@@ -1215,6 +1300,27 @@
           </div>
         </section>
 
+        <!-- ---------------------------------------------------------- data -->
+        <section class="sw-pane" id="sec-data">
+          <h4>Data</h4>
+          <div class="sw-desc">What dsagent keeps in this browser. Transcripts, preferences and the checklist are local; the API key and the workspace are server config.</div>
+
+          <div class="sw-card">
+            <div class="sw-kv"><span class="k">Stored transcripts</span><span class="v" id="dataSessions">-</span></div>
+            <div class="sw-kv"><span class="k">Local storage used</span><span class="v" id="dataSize">-</span></div>
+            <div class="sw-kv"><span class="k">Interface preferences</span><span class="v" id="dataPrefs">-</span></div>
+          </div>
+
+          <div class="sw-card">
+            <h5><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M6 6l1 14h10l1-14"></path></svg> Delete local data</h5>
+            <p>Clearing the stored chats removes every transcript and the activity list from this browser, then reloads the page with an empty session. The workspace, the API key and the server context are not touched.</p>
+            <div class="sw-actions">
+              <button class="btn-sm ghost" onclick="resetPrefs()">Reset preferences</button>
+              <button class="btn-sm ghost" onclick="clearStoredChats()">Clear stored chats</button>
+            </div>
+          </div>
+        </section>
+
         <!-- --------------------------------------------------------- about -->
         <section class="sw-pane" id="sec-about">
           <h4>About</h4>
@@ -1234,7 +1340,7 @@
     <div class="cfg-error sw-err" id="cfg-error"></div>
 
     <footer class="sw-foot">
-      <span class="note">Changes apply to the next task.</span>
+      <span class="note" id="swNote">Changes apply to the next task.</span>
       <span class="grow"></span>
       <button class="btn-cancel" onclick="closeSettings()">Cancel</button>
       <button class="btn-save" onclick="saveConfig()">Save changes</button>
@@ -1242,69 +1348,95 @@
   </div>
 </div>
 
-<!-- workspace -->
+<!-- open workspace - same window frame as the settings window -->
 <div class="overlay" id="workspaceOverlay">
-  <div class="modal" style="max-width:560px">
-    <h3>Open workspace</h3>
-    <div class="m-sub">The agent can only read and write inside this folder.</div>
-    <label class="lbl" for="ws-path">Folder path</label>
-    <input type="text" id="ws-path" class="input-mono" spellcheck="false" placeholder="C:\Users\you\project">
-    <div class="key-hint">Absolute path on the machine running dsagent. Saving restarts the tool root - the conversation keeps its history but earlier paths may no longer resolve.</div>
-    <div class="cfg-error" id="ws-error"></div>
-    <div class="modal-actions">
-      <button class="btn-cancel" onclick="document.getElementById('workspaceOverlay').classList.remove('open')">Cancel</button>
+  <div class="settings-win sm" role="dialog" aria-modal="true" aria-labelledby="wsTitle">
+    <header class="sw-head">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>
+      <h3 id="wsTitle">Open workspace</h3>
+      <span class="sw-tag">local</span>
+      <button class="sw-close" onclick="closeOverlay('workspaceOverlay')" title="Close (Esc)">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+      </button>
+    </header>
+    <div class="sw-body">
+      <div class="sw-panes">
+        <section class="sw-pane active">
+          <h4>Folder the agent may touch</h4>
+          <div class="sw-desc">Reads and writes stay inside this folder - <code>..</code> escapes are rejected by the server.</div>
+          <div class="sw-field">
+            <label class="lbl" for="ws-path">Folder path</label>
+            <input type="text" id="ws-path" class="input-mono" spellcheck="false" placeholder="C:\Users\you\project">
+            <div class="key-hint">Absolute path on the machine running dsagent. Saving restarts the tool root: the conversation keeps its history, but earlier paths may no longer resolve.</div>
+          </div>
+          <div class="cfg-error" id="ws-error"></div>
+        </section>
+      </div>
+    </div>
+    <footer class="sw-foot">
+      <span class="note">Ctrl+O opens this window.</span>
+      <span class="grow"></span>
+      <button class="btn-cancel" onclick="closeOverlay('workspaceOverlay')">Cancel</button>
       <button class="btn-save" onclick="saveWorkspace()">Use this folder</button>
-    </div>
+    </footer>
   </div>
 </div>
 
-<!-- command palette -->
+<!-- command palette - the search field is the window header -->
 <div class="overlay" id="paletteOverlay" style="align-items:flex-start">
-  <div class="palette">
-    <input id="palInput" placeholder="Type a command..." spellcheck="false" autocomplete="off">
+  <div class="settings-win sm palette-win" role="dialog" aria-modal="true" aria-label="Command palette">
+    <header class="sw-head pal-head">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><line x1="16.5" y1="16.5" x2="21" y2="21"></line></svg>
+      <input class="pal-input" id="palInput" placeholder="Type a command..." spellcheck="false" autocomplete="off">
+      <span class="sw-tag">esc</span>
+    </header>
     <div class="pal-list" id="palList"></div>
+    <footer class="sw-foot">
+      <span class="note"><kbd>&uarr;</kbd> <kbd>&darr;</kbd> to move, <kbd>Enter</kbd> to run.</span>
+    </footer>
   </div>
 </div>
 
-<!-- shortcuts -->
+<!-- shortcuts - same window frame, one pane -->
 <div class="overlay" id="shortcutsOverlay">
-  <div class="modal" style="max-width:480px">
-    <h3>Keyboard shortcuts</h3>
-    <div class="m-sub">Works anywhere in the workspace.</div>
-    <div class="sc-grid">
-      <span>Command palette</span><span class="k"><kbd>Ctrl</kbd> <kbd>K</kbd></span>
-      <span>Send task</span><span class="k"><kbd>Enter</kbd></span>
-      <span>New line</span><span class="k"><kbd>Shift</kbd> <kbd>Enter</kbd></span>
-      <span>Stop agent</span><span class="k"><kbd>Ctrl</kbd> <kbd>.</kbd></span>
-      <span>New session</span><span class="k"><kbd>Alt</kbd> <kbd>N</kbd></span>
-      <span>Toggle sidebar</span><span class="k"><kbd>Ctrl</kbd> <kbd>B</kbd></span>
-      <span>Toggle activity panel</span><span class="k"><kbd>Ctrl</kbd> <kbd>J</kbd></span>
-      <span>Focus mode</span><span class="k"><kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>F</kbd></span>
-      <span>Tool settings</span><span class="k"><kbd>Ctrl</kbd> <kbd>,</kbd></span>
-      <span>Open workspace</span><span class="k"><kbd>Ctrl</kbd> <kbd>O</kbd></span>
-      <span>Focus prompt</span><span class="k"><kbd>/</kbd></span>
-      <span>Close overlay</span><span class="k"><kbd>Esc</kbd></span>
+  <div class="settings-win sm" role="dialog" aria-modal="true" aria-labelledby="scTitle">
+    <header class="sw-head">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="2"></rect><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"></path></svg>
+      <h3 id="scTitle">Keyboard shortcuts</h3>
+      <span class="sw-tag">F1</span>
+      <button class="sw-close" onclick="closeOverlay('shortcutsOverlay')" title="Close (Esc)">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+      </button>
+    </header>
+    <div class="sw-body">
+      <div class="sw-panes">
+        <section class="sw-pane active">
+          <h4>Every binding</h4>
+          <div class="sw-desc">Works anywhere in the workspace, except while typing in a field.</div>
+          <div class="sc-grid">
+            <span>Command palette</span><span class="k"><kbd>Ctrl</kbd> <kbd>K</kbd></span>
+            <span>Send task</span><span class="k"><kbd>Enter</kbd></span>
+            <span>New line</span><span class="k"><kbd>Shift</kbd> <kbd>Enter</kbd></span>
+            <span>Send (Enter off)</span><span class="k"><kbd>Ctrl</kbd> <kbd>Enter</kbd></span>
+            <span>Stop agent</span><span class="k"><kbd>Ctrl</kbd> <kbd>.</kbd></span>
+            <span>New session</span><span class="k"><kbd>Alt</kbd> <kbd>N</kbd></span>
+            <span>Toggle sidebar</span><span class="k"><kbd>Ctrl</kbd> <kbd>B</kbd></span>
+            <span>Toggle activity panel</span><span class="k"><kbd>Ctrl</kbd> <kbd>J</kbd></span>
+            <span>Focus mode</span><span class="k"><kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>F</kbd></span>
+            <span>Tool settings</span><span class="k"><kbd>Ctrl</kbd> <kbd>,</kbd></span>
+            <span>Save settings</span><span class="k"><kbd>Ctrl</kbd> <kbd>S</kbd></span>
+            <span>Open workspace</span><span class="k"><kbd>Ctrl</kbd> <kbd>O</kbd></span>
+            <span>Focus prompt</span><span class="k"><kbd>/</kbd></span>
+            <span>Close window</span><span class="k"><kbd>Esc</kbd></span>
+          </div>
+        </section>
+      </div>
     </div>
-    <div class="modal-actions">
-      <button class="btn-save" onclick="document.getElementById('shortcutsOverlay').classList.remove('open')">Got it</button>
-    </div>
-  </div>
-</div>
-
-<!-- about -->
-<div class="overlay" id="aboutOverlay">
-  <div class="modal" style="max-width:480px">
-    <h3>dsagent</h3>
-    <div class="m-sub">A local autonomous coding agent - one binary, one workspace, your API key.</div>
-    <div class="card" style="margin-top:10px">
-      <div class="kv"><span class="k">Model</span><span class="v" id="aboutModel">-</span></div>
-      <div class="kv"><span class="k">Workspace</span><span class="v" id="aboutWorkdir">-</span></div>
-      <div class="kv"><span class="k">Tools</span><span class="v">list_dir, read_file, write_file, run_shell, web_fetch</span></div>
-      <div class="kv"><span class="k">Step limit</span><span class="v" id="aboutSteps">-</span></div>
-    </div>
-    <div class="modal-actions">
-      <button class="btn-save" onclick="document.getElementById('aboutOverlay').classList.remove('open')">Close</button>
-    </div>
+    <footer class="sw-foot">
+      <span class="note">Esc closes any window.</span>
+      <span class="grow"></span>
+      <button class="btn-save" onclick="closeOverlay('shortcutsOverlay')">Got it</button>
+    </footer>
   </div>
 </div>
 
@@ -1377,6 +1509,113 @@ const MODE_DESC = {
   plan: 'Plan mode: write_file is off, every command asks first',
   ask: 'Ask mode: read-only answers, no writes or commands'
 };
+
+/* ------------------------------------------------------------------ */
+/* local preferences                                                  */
+/* ------------------------------------------------------------------ */
+// These are browser preferences, not server config: the agent binary knows
+// nothing about them. They are stored per origin, exactly like the transcripts.
+const PREFS_KEY = 'dsagent.prefs.v1';
+const SEC_KEY = 'dsagent.settings.section.v1';
+const PREF_DEFAULTS = {
+  enter: true,       // Enter sends; off means Ctrl+Enter sends and Enter wraps
+  ts: true,          // timestamps beside every message
+  follow: true,      // keep the newest step in view while the agent works
+  collapseOk: false, // fold a tool card once it succeeds
+  leavetab: true,    // warn before closing the tab mid-run
+  chime: false       // short tone when a run ends
+};
+
+function loadPrefs() {
+  const out = {};
+  Object.keys(PREF_DEFAULTS).forEach((k) => { out[k] = PREF_DEFAULTS[k]; });
+  try {
+    const raw = JSON.parse(localStorage.getItem(PREFS_KEY)) || {};
+    Object.keys(PREF_DEFAULTS).forEach((k) => {
+      if (typeof raw[k] === 'boolean') out[k] = raw[k];
+    });
+  } catch (e) { /* storage unavailable: defaults */ }
+  return out;
+}
+
+const prefs = loadPrefs();
+
+function savePrefs() {
+  try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch (e) { /* private mode */ }
+}
+
+// Only what CSS can express lives here; the rest is read at the point of use.
+function applyPrefs() {
+  document.body.classList.toggle('no-ts', !prefs.ts);
+}
+
+function changedPrefs() {
+  return Object.keys(PREF_DEFAULTS).filter((k) => prefs[k] !== PREF_DEFAULTS[k]).length;
+}
+
+function paintPrefs() {
+  $$('#sec-interface input[data-pref]').forEach((box) => { box.checked = !!prefs[box.dataset.pref]; });
+  const row = $('#dataPrefs');
+  if (row) {
+    const changed = changedPrefs();
+    row.textContent = changed ? changed + ' changed' : 'defaults';
+  }
+}
+
+function setPref(key, value) {
+  if (!PREF_DEFAULTS.hasOwnProperty(key)) return;
+  prefs[key] = !!value;
+  savePrefs();
+  applyPrefs();
+  paintPrefs();
+}
+
+function resetPrefs() {
+  if (!confirm('Reset every interface preference on this machine to its default?')) return;
+  Object.keys(PREF_DEFAULTS).forEach((k) => { prefs[k] = PREF_DEFAULTS[k]; });
+  savePrefs();
+  applyPrefs();
+  paintPrefs();
+  toast('Interface preferences reset');
+}
+
+// What this browser is holding on to. localStorage counts UTF-16 units, so the
+// figure is an approximation of what the profile actually occupies.
+function paintData() {
+  let raw = '';
+  try { raw = localStorage.getItem(CHATS_KEY) || ''; } catch (e) { raw = ''; }
+  let sessions = 0;
+  try {
+    const data = JSON.parse(raw);
+    sessions = data && Array.isArray(data.sessions) ? data.sessions.length : 0;
+  } catch (e) { sessions = 0; }
+  const count = $('#dataSessions');
+  if (count) count.textContent = sessions ? sessions + (sessions === 1 ? ' session' : ' sessions') : 'none';
+  const size = $('#dataSize');
+  if (size) size.textContent = raw ? (raw.length / 1024).toFixed(1) + ' KB' : '0 KB';
+  paintPrefs();
+}
+
+// One short tone when a run ends. Off by default; a blocked AudioContext is
+// ignored rather than thrown, because a missing beep must never break a run.
+function chime() {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    const ac = new AC();
+    const osc = ac.createOscillator();
+    const gain = ac.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = 680;
+    gain.gain.setValueAtTime(0.0001, ac.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.05, ac.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + 0.26);
+    osc.connect(gain).connect(ac.destination);
+    osc.start();
+    osc.stop(ac.currentTime + 0.3);
+    setTimeout(() => { try { ac.close(); } catch (e) { /* already closed */ } }, 800);
+  } catch (e) { /* audio blocked */ }
+}
 
 /* ------------------------------------------------------------------ */
 /* utils                                                              */
@@ -2002,9 +2241,13 @@ function watchRail(thread) {
   scheduleRail(thread);
 }
 
+// Two owners decide whether the transcript scrolls: the user (who scrolled up,
+// so they stay put) and the "follow the run" preference (off: the view stays
+// where you left it while the agent streams). An explicit call still forces it.
 function scrollToBottom(force) {
   if (state.replaying) return;
-  if (force || !state.userScrolledUp) {
+  const follow = prefs.follow || !state.generating;
+  if (force || (follow && !state.userScrolledUp)) {
     el.threadScroll.scrollTop = el.threadScroll.scrollHeight;
   }
 }
@@ -2189,7 +2432,8 @@ function setToolResult(card, text) {
   card.querySelector('.tdur').textContent = clock(Date.now() - card._started);
   // Long, successful output collapses so the transcript stays scannable; a
   // failure stays open because that is the thing you actually want to read.
-  if (!failed && body.length > 600) card.classList.remove('open');
+  // The Interface pane can fold every success, not just the long ones.
+  if (!failed && (body.length > 600 || prefs.collapseOk)) card.classList.remove('open');
   setToolRecord(card, body);
   return failed;
 }
@@ -2581,7 +2825,6 @@ async function streamTask(sess, task) {
           lastCard = toolCard;
           toolRow = addTimelineItem(sess, name, argSummary(name, args));
           setLive(sess, 'tool', 'Running ' + name, argSummary(name, args));
-          if (state.onb.tool !== true) markOnb('tool');
         } else if (ev.type === 'tool_result') {
           const failed = setToolResult(toolCard, ev.text);
           toolRow = setTimelineState(toolRow, failed ? 'error' : 'ok');
@@ -2670,6 +2913,7 @@ async function streamTask(sess, task) {
     }
     queueChatSave();
     renderActivity();
+    if (prefs.chime) chime();
     setGenerating(false);
     paintStats();
     scrollToBottom();
@@ -3060,15 +3304,41 @@ function applyConfig(c) {
   renderOnboarding();
 }
 
-// Section switching for the settings window.
+// Section switching for the settings window. The last section is remembered,
+// so Ctrl+, comes back to where you were instead of starting over.
 function settingsSection(name) {
   state.settingsSec = name || 'conn';
+  try { localStorage.setItem(SEC_KEY, state.settingsSec); } catch (e) { /* private mode */ }
   $$('#settingsOverlay .sw-nav button').forEach((b) => b.classList.toggle('active', b.dataset.sec === state.settingsSec));
   $$('#settingsOverlay .sw-pane').forEach((p) => p.classList.toggle('active', p.id === 'sec-' + state.settingsSec));
+  // The Data pane describes live storage, so it is measured when shown.
+  if (state.settingsSec === 'data') paintData();
 }
 
-function openSettings() {
-  settingsSection(state.settingsSec || 'conn');
+function loadSettingsSection() {
+  try {
+    const s = localStorage.getItem(SEC_KEY);
+    return s && document.getElementById('sec-' + s) ? s : 'conn';
+  } catch (e) { return 'conn'; }
+}
+
+// The footer note doubles as the unsaved-changes indicator: the form fields
+// only apply on Save, so saying so beats saying nothing.
+function markSettingsDirty(on) {
+  const note = $('#swNote');
+  if (!note) return;
+  note.textContent = on ? 'Unsaved changes - Save or Enter applies them.' : 'Changes apply to the next task.';
+  note.classList.toggle('dirty', !!on);
+}
+
+// openSettings('safety') jumps straight to a section; that is what the menu
+// entries which name one ("Approval posture", "Model + step limit") call.
+function openSettings(section) {
+  const want = typeof section === 'string' && document.getElementById('sec-' + section) ? section : (state.settingsSec || 'conn');
+  settingsSection(want);
+  markSettingsDirty(false);
+  paintPrefs();
+  paintData();
   fetch('/api/config').then((r) => r.json()).then((c) => {
     applyConfig(c);
     $('#cfg-key').value = '';
@@ -3079,6 +3349,7 @@ function openSettings() {
     state.autoAtOpen = !!c.auto_approve;
     paintKeyState(c);
     showCfgError('');
+    markSettingsDirty(false);
     $('#settingsOverlay').classList.add('open');
   }).catch(() => showCfgError('Could not load settings.'));
 }
@@ -3089,6 +3360,14 @@ function closeSettings() {
 
 function onKeyInput(input) {
   input.placeholder = input.value.trim() ? 'replacing current key' : 'sk-...';
+}
+
+// Step presets: the range is 1-200, and the useful values are four numbers.
+function setSteps(n) {
+  const field = $('#cfg-maxsteps');
+  if (!field) return;
+  field.value = String(n);
+  markSettingsDirty(true);
 }
 
 function saveConfig() {
@@ -3116,9 +3395,10 @@ function saveConfig() {
       applyConfig(out.d);
       paintKeyState(out.d);
       closeSettings();
-      if (state.onb.settings !== true) markOnb('settings');
-      if (out.d.auto_approve !== state.autoAtOpen && state.onb.safety !== true) markOnb('safety');
-      if (!out.d.api_key_set) openSettings();
+      // Saving the Safety pane (or flipping Always Allow) means the posture was
+      // actually reviewed - that is the checklist item, not the act of saving.
+      if ((state.settingsSec === 'safety' || out.d.auto_approve !== state.autoAtOpen) && state.onb.safety !== true) markOnb('safety');
+      if (!out.d.api_key_set) openSettings('conn');
       else toast('Settings saved');
     })
     .catch(() => showCfgError('Could not reach dsagent.'));
@@ -3218,34 +3498,72 @@ function markOnb(id) {
   renderOnboarding();
 }
 
+// Four items, each ticked by real state rather than by clicking it - a
+// checklist that can only be completed by clicking itself is decoration. Once
+// all four are done the whole tab retires: this is setup, not a panel.
 const ONB_ITEMS = [
-  { id: 'key', title: 'Connect your API key', desc: 'Stored encrypted with DPAPI; never sent to this page.', action: openSettings, done: () => !!(state.config && state.config.api_key_set) },
-  { id: 'workspace', title: 'Confirm the workspace', desc: 'The agent only touches files inside this folder.', action: openWorkspace, done: () => !!state.onb.workspace },
-  { id: 'settings', title: 'Review tool settings', desc: 'Model, step limit and approval behaviour.', action: openSettings, done: () => !!state.onb.settings },
-  { id: 'safety', title: 'Decide your approval posture', desc: 'Ask before shell commands and file writes, or Always Allow.', action: openSettings, done: () => !!state.onb.safety },
-  { id: 'task', title: 'Start your first session', desc: 'Describe a task and let the agent run.', action: focusComposer, done: () => !!state.onb.task },
-  { id: 'tool', title: 'Watch the agent use a tool', desc: 'list_dir, read_file, write_file, run_shell, web_fetch.', action: focusComposer, done: () => !!state.onb.tool }
+  { id: 'key', title: 'Connect your API key', desc: 'Sealed with your OS account; nothing runs without it.', action: () => openSettings('conn'), done: () => !!(state.config && state.config.api_key_set) },
+  { id: 'workspace', title: 'Confirm the workspace', desc: 'Every file tool is confined to this folder.', action: openWorkspace, done: () => !!state.onb.workspace },
+  { id: 'safety', title: 'Review the approval posture', desc: 'Ask before shell commands and writes, or Always Allow.', action: () => openSettings('safety'), done: () => !!state.onb.safety },
+  { id: 'task', title: 'Start your first task', desc: 'Describe the work and let the agent run.', action: focusComposer, done: () => !!(state.onb.task || (activeSession() && activeSession().messages > 0)) }
 ];
 
 function renderOnboarding() {
   const done = ONB_ITEMS.filter((i) => i.done()).length;
   const pct = Math.round((done / ONB_ITEMS.length) * 100);
   el.onbBar.style.width = pct + '%';
-  el.onbCount.textContent = done + ' of ' + ONB_ITEMS.length + ' complete';
+  el.onbCount.textContent = done + ' of ' + ONB_ITEMS.length + (done === ONB_ITEMS.length ? ' - setup complete' : ' complete');
   el.onbPct.textContent = pct + '%';
-  if (!el.onbList) return;
-  el.onbList.innerHTML = '';
-  ONB_ITEMS.forEach((item) => {
-    const isDone = item.done();
-    const b = document.createElement('button');
-    b.className = 'onb-item' + (isDone ? ' done' : '');
-    b.innerHTML = '<span class="onb-check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><polyline points="20 6 9 17 4 12"></polyline></svg></span>' +
-      '<span><span class="ot"></span><span class="od"></span></span>';
-    b.querySelector('.ot').textContent = item.title;
-    b.querySelector('.od').textContent = item.desc;
-    b.onclick = () => { item.action(); };
-    el.onbList.append(b);
+  if (el.onbList) {
+    el.onbList.innerHTML = '';
+    ONB_ITEMS.forEach((item) => {
+      const isDone = item.done();
+      const b = document.createElement('button');
+      b.className = 'onb-item' + (isDone ? ' done' : '');
+      b.innerHTML = '<span class="onb-check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><polyline points="20 6 9 17 4 12"></polyline></svg></span>' +
+        '<span><span class="ot"></span><span class="od"></span></span>';
+      b.querySelector('.ot').textContent = item.title;
+      b.querySelector('.od').textContent = item.desc;
+      b.onclick = () => { item.action(); };
+      el.onbList.append(b);
+    });
+  }
+  // Retire once, automatically, on a fresh install. After that the choice is
+  // the user's: hideOnb()/showOnb() set `hidden` to true/false explicitly.
+  if (done === ONB_ITEMS.length && state.onb.hidden === undefined) {
+    hideOnb(true);
+    toast('Setup complete - checklist hidden. Ctrl+K, "Get started checklist" brings it back.');
+  }
+  syncOnbVisibility();
+}
+
+// The tab, the sidebar link, the header icon and the View entry are one
+// feature: they hide and return together, so nothing points at a dead pane.
+function syncOnbVisibility() {
+  const on = !state.onb.hidden;
+  ['#onbTab', '#onbLink', '#onbBtn', '#onbMenuItem'].forEach((sel) => {
+    const node = $(sel);
+    if (node) node.classList.toggle('onb-off', !on);
   });
+  const pane = $('#pane-start');
+  if (!on && pane && pane.classList.contains('active')) {
+    if (panels.right) showTab('activity');
+    else $$('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === 'activity'));
+  }
+}
+
+function hideOnb(silent) {
+  state.onb.hidden = true;
+  saveOnb();
+  syncOnbVisibility();
+  if (!silent) toast('Checklist hidden - Ctrl+K, "Get started checklist" brings it back.');
+}
+
+function showOnb() {
+  state.onb.hidden = false;
+  saveOnb();
+  syncOnbVisibility();
+  showTab('start');
 }
 
 /* ------------------------------------------------------------------ */
@@ -3317,7 +3635,7 @@ const COMMANDS = [
   { title: 'Toggle sidebar', desc: 'Show or hide the session list', kbd: 'Ctrl B', run: toggleSidebar },
   { title: 'Toggle activity panel', desc: 'Show or hide live tool activity', kbd: 'Ctrl J', run: toggleRight },
   { title: 'Focus mode', desc: 'Hide both side panels', kbd: 'Ctrl Shift F', run: focusMode },
-  { title: 'Get started checklist', desc: 'Onboarding progress', kbd: '', run: () => showTab('start') },
+  { title: 'Get started checklist', desc: 'Setup progress for this machine', kbd: '', run: showOnb },
   { title: 'Mode: Agent', desc: 'Full autonomy', kbd: '', run: () => setMode('agent') },
   { title: 'Mode: Plan', desc: 'Plan before touching files', kbd: '', run: () => setMode('plan') },
   { title: 'Mode: Ask', desc: 'Explain without changing files', kbd: '', run: () => setMode('ask') },
@@ -3379,13 +3697,14 @@ function copyLastAgent() {
 
 function openShortcuts() { $('#shortcutsOverlay').classList.add('open'); }
 
-function openAbout() {
-  if (state.config) {
-    $('#aboutModel').textContent = state.config.model || '-';
-    $('#aboutWorkdir').textContent = state.config.workdir || '-';
-    $('#aboutSteps').textContent = String(state.config.max_steps || '-');
-  }
-  $('#aboutOverlay').classList.add('open');
+// About is a settings section, not a second copy of one.
+function openAbout() { openSettings('about'); }
+
+// One closer for every window, so a dialog never hard-codes its own id in an
+// onclick handler.
+function closeOverlay(id) {
+  const node = document.getElementById(id);
+  if (node) node.classList.remove('open');
 }
 
 function closeOverlays() {
@@ -3422,7 +3741,10 @@ $$('.overlay').forEach((o) => o.addEventListener('mousedown', (e) => { if (e.tar
 /* composer wiring */
 el.input.addEventListener('input', autoGrow);
 el.input.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendClick(); }
+  if (e.key !== 'Enter' || e.shiftKey) return;
+  // Shift+Enter is always a new line. Otherwise the "Send with Enter"
+  // preference decides, and Ctrl+Enter always sends.
+  if (prefs.enter || e.ctrlKey || e.metaKey) { e.preventDefault(); handleSendClick(); }
 });
 $$('#modeToggle button').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
 document.addEventListener('click', (e) => {
@@ -3459,6 +3781,14 @@ $('#palInput').addEventListener('keydown', (e) => {
 $('#settingsOverlay').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && e.target.tagName === 'INPUT') { e.preventDefault(); saveConfig(); }
 });
+// Only the fields that need a Save are tracked: the Interface toggles apply
+// the moment they are clicked and must not claim to be unsaved.
+['#cfg-key', '#cfg-model', '#cfg-workdir', '#cfg-maxsteps', '#cfg-auto-approve'].forEach((sel) => {
+  const node = $(sel);
+  if (!node) return;
+  node.addEventListener('input', () => markSettingsDirty(true));
+  node.addEventListener('change', () => markSettingsDirty(true));
+});
 $('#ws-path').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); saveWorkspace(); }
 });
@@ -3469,6 +3799,12 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     // Esc dismisses overlays only - it never kills a running task.
     closeOverlays();
+    return;
+  }
+  if (mod && e.key.toLowerCase() === 's') {
+    // Ctrl+S means "save settings" only while the settings window is open;
+    // everywhere else the browser keeps it.
+    if ($('#settingsOverlay').classList.contains('open')) { e.preventDefault(); saveConfig(); }
     return;
   }
   if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); openPalette(); return; }
@@ -3499,16 +3835,28 @@ if (document.fonts && document.fonts.ready) {
 }
 window.addEventListener('resize', () => state.sessions.forEach((s) => scheduleRail(s.thread)));
 
+// Closing the tab cancels the run on the server, so ask first (Interface pane
+// can switch this off).
+window.addEventListener('beforeunload', (e) => {
+  if (!prefs.leavetab || !state.generating) return;
+  e.preventDefault();
+  e.returnValue = '';
+  return '';
+});
+
 function boot() {
   restoreChats();
   setMode(loadMode(), { silent: true });
   renderChips();
+  applyPrefs();
+  paintPrefs();
+  state.settingsSec = loadSettingsSection();
   renderOnboarding();
 
   fetch('/api/config').then((r) => r.json()).then((c) => {
     applyConfig(c);
     if (!c.api_key_set && c.api_key_source !== 'env') {
-      openSettings();
+      openSettings('conn');
       toast('Add an API key to let the agent run.', 'warn');
     }
   }).catch(() => toast('Could not reach dsagent.', 'error'));
