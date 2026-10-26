@@ -1,9 +1,15 @@
-# dsagent
+<p align="center">
+  <img src="ui/logo.svg" width="76" height="76" alt="dsagent">
+</p>
 
-![Go Version](https://img.shields.io/badge/Go-1.21%2B-blue)
-![License](https://img.shields.io/badge/License-MIT-green)
-![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
-![RAM](https://img.shields.io/badge/Memory-4MB-brightgreen)
+<h1 align="center">dsagent</h1>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Go-1.21%2B-blue" alt="Go 1.21+">
+  <img src="https://img.shields.io/badge/License-MIT-green" alt="License: MIT">
+  <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey" alt="Platform: Windows | macOS | Linux">
+  <img src="https://img.shields.io/badge/tools-6-blue" alt="6 tools">
+</p>
 
 A coding agent in one Go binary. It serves its own UI on loopback, talks to the
 DeepSeek `/chat/completions` API, and runs tools - list, read, write, shell,
