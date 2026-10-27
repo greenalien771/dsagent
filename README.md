@@ -75,6 +75,7 @@ Stored in `config.json` under the OS config directory:
 | `auto_approve` | `false` | skip approval cards for non-dangerous calls |
 | `idle_timeout_sec` | `120` | no-output watchdog, 10-1800 seconds |
 | `run_timeout_min` | `25` | wall-clock cap per task, 1-240 minutes |
+| `shell_timeout_sec` | `60` | cap on one `run_shell` command, 5-3600 seconds |
 
 The API key is never written into `config.json` and never sent to the browser.
 `DEEPSEEK_API_KEY` in the environment wins over anything stored and is never
@@ -144,7 +145,9 @@ service. They are also the parts worth reading before you trust it:
 - **Watchdog.** A run with no progress for `idle_timeout_sec` (120s by default),
   or one that exceeds `run_timeout_min` (25 minutes by default), is cancelled.
   Both are set in the Agent pane and are checked when a run starts. Stop and
-  force-abort are both available from the UI.
+  force-abort are both available from the UI. The per-command limit
+  (`shell_timeout_sec`) is read per call instead, so a save mid-run applies to
+  the next command rather than the next task.
 
 What it is *not*: a sandbox against a hostile model. Once you approve a command,
 that command runs with your privileges. The approval card is the boundary - read
@@ -153,7 +156,11 @@ it.
 ## Limits
 
 - One task at a time, one user, loopback only.
-- Shell commands get 60s; tool results are truncated at 8KB.
+- Shell commands get `shell_timeout_sec` (60s by default, up to an hour
+  from Settings > Agent). It is a separate knob from the two watchdog timers:
+  this one kills a single child process, they end the whole task. A command the
+  limit kills says so, and says which setting to raise.
+- Tool results are truncated at 8KB.
 - The fourth identical tool call in one run is refused rather than executed, so
   a model cannot spin on a command that keeps failing.
 - The API endpoint is fixed at build time (`baseURL` in `agent.go`).

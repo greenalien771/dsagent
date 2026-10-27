@@ -1277,9 +1277,23 @@
             </div>
           </div>
 
+          <div class="sw-field">
+            <label class="lbl" for="cfg-shelltimeout">Shell command timeout (seconds)</label>
+            <input type="number" id="cfg-shelltimeout" min="5" max="3600" step="5">
+            <div class="key-hint">How long a single <code>run_shell</code> command may run before it is killed. Long builds and test suites need more than the 60s default; the whole task is still bounded by the task time limit. Allowed range: 5-3600.</div>
+            <div class="step-picks">
+              <span class="pref-hint" style="margin:0 2px 0 0">Common values</span>
+              <button onclick="setShellTimeout(60)">60</button>
+              <button onclick="setShellTimeout(300)">300</button>
+              <button onclick="setShellTimeout(600)">600</button>
+              <button onclick="setShellTimeout(1800)">1800</button>
+            </div>
+          </div>
+
           <div class="sw-card">
             <h5><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg> Run watchdog</h5>
             <p>The server watches every run. A task that produces no output for <b id="wdIdle">2 minutes</b>, or that runs longer than <b id="wdRun">25 minutes</b>, is cancelled automatically and the busy flag is released. Both numbers are the fields above; the Stop button escalates on its own if a run will not unwind.</p>
+            <p style="margin-top:8px">This is not the same knob as <b>Shell command timeout</b> above: that one kills a single command (<b id="wdShell">60 seconds</b>), while these two end the whole task.</p>
           </div>
         </section>
 
@@ -3782,19 +3796,31 @@ function setRunLimit(n) {
   markSettingsDirty(true);
 }
 
+function setShellTimeout(n) {
+  const field = $('#cfg-shelltimeout');
+  if (!field) return;
+  field.value = String(n);
+  markSettingsDirty(true);
+}
+
 // paintWatchdog shows the timers the server actually enforces: the fields are
 // the input, the Run watchdog card is the same numbers in words.
 function paintWatchdog(c) {
   const idleSec = c.idle_timeout_sec || 120;
   const runMin = c.run_timeout_min || 25;
+  const shellSec = c.shell_timeout_sec || 60;
   const idle = $('#cfg-idle');
   const run = $('#cfg-runlimit');
+  const shell = $('#cfg-shelltimeout');
   if (idle) idle.value = String(idleSec);
   if (run) run.value = String(runMin);
+  if (shell) shell.value = String(shellSec);
   const wdIdle = $('#wdIdle');
   const wdRun = $('#wdRun');
+  const wdShell = $('#wdShell');
   if (wdIdle) wdIdle.textContent = fmtSpan(idleSec);
   if (wdRun) wdRun.textContent = fmtSpan(runMin * 60);
+  if (wdShell) wdShell.textContent = fmtSpan(shellSec);
 }
 
 function saveConfig() {
@@ -3802,6 +3828,7 @@ function saveConfig() {
   const steps = parseInt($('#cfg-maxsteps').value, 10);
   const idleSec = parseInt($('#cfg-idle').value, 10);
   const runMin = parseInt($('#cfg-runlimit').value, 10);
+  const shellSec = parseInt($('#cfg-shelltimeout').value, 10);
   const body = {
     model: $('#cfg-model').value.trim(),
     // Always Allow is applied by its own button, so the server value is the
@@ -3813,6 +3840,7 @@ function saveConfig() {
   if (!isNaN(steps) && steps > 0) body.max_steps = steps;
   if (!isNaN(idleSec) && idleSec > 0) body.idle_timeout_sec = idleSec;
   if (!isNaN(runMin) && runMin > 0) body.run_timeout_min = runMin;
+  if (!isNaN(shellSec) && shellSec > 0) body.shell_timeout_sec = shellSec;
   // Omitted entirely when blank: an empty field means "keep the current key".
   if (key) body.api_key = key;
 
@@ -4266,7 +4294,7 @@ $('#settingsOverlay').addEventListener('keydown', (e) => {
 });
 // Only the fields that need a Save are tracked: the Interface toggles apply
 // the moment they are clicked and must not claim to be unsaved.
-['#cfg-key', '#cfg-model', '#cfg-workdir', '#cfg-maxsteps', '#cfg-idle', '#cfg-runlimit'].forEach((sel) => {
+['#cfg-key', '#cfg-model', '#cfg-workdir', '#cfg-maxsteps', '#cfg-idle', '#cfg-runlimit', '#cfg-shelltimeout'].forEach((sel) => {
   const node = $(sel);
   if (!node) return;
   node.addEventListener('input', () => markSettingsDirty(true));

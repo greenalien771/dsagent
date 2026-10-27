@@ -105,6 +105,62 @@ func TestConfigJSONNeverExposesTheKey(t *testing.T) {
 	}
 }
 
+// The shell command timeout is a setting like the watchdog numbers: it has to
+// survive a save and a reload, and an out-of-range value is refused rather than
+// silently rewritten.
+func TestShellTimeoutDefaultSaveAndValidate(t *testing.T) {
+	withTempConfig(t)
+
+	c := loadConfig()
+	if c.ShellTimeoutSec != defaultShellTimeoutSec {
+		t.Fatalf("default = %ds, want %ds", c.ShellTimeoutSec, defaultShellTimeoutSec)
+	}
+	if got := c.shellTimeout(); got != 60*time.Second {
+		t.Fatalf("shellTimeout() = %v, want 1m0s", got)
+	}
+
+	long := 600
+	if err := applyPatch(c, configPatch{ShellTimeoutSec: &long}); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.shellTimeout(); got != 10*time.Minute {
+		t.Fatalf("shellTimeout() = %v, want 10m", got)
+	}
+
+	again := loadConfig()
+	if again.ShellTimeoutSec != 600 {
+		t.Fatalf("reloaded = %ds, want 600s", again.ShellTimeoutSec)
+	}
+	vb, err := json.Marshal(viewOf(again))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(vb), `"shell_timeout_sec":600`) {
+		t.Fatalf("the view does not expose the saved value to the Settings form: %s", vb)
+	}
+
+	tooSmall, tooBig := minShellTimeoutSec-1, maxShellTimeoutSec+1
+	if err := applyPatch(c, configPatch{ShellTimeoutSec: &tooSmall}); err == nil {
+		t.Fatal("a shell timeout below the minimum was accepted")
+	}
+	if err := applyPatch(c, configPatch{ShellTimeoutSec: &tooBig}); err == nil {
+		t.Fatal("a shell timeout above the maximum was accepted")
+	}
+	if c.ShellTimeoutSec != 600 {
+		t.Fatalf("a refused value was written anyway: %ds", c.ShellTimeoutSec)
+	}
+
+	// A config file written before this field existed carries a zero, and a
+	// hand-edited one can carry nonsense: both land on the default.
+	c.ShellTimeoutSec = 0
+	if err := saveConfig(c); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadConfig().ShellTimeoutSec; got != defaultShellTimeoutSec {
+		t.Fatalf("a zero on disk loaded as %ds, want the default %ds", got, defaultShellTimeoutSec)
+	}
+}
+
 func TestBlankKeyKeepsExistingKey(t *testing.T) {
 	withTempConfig(t)
 	secret := "sk-abcdefghijklmnopqrstuvwxyz0123456789"

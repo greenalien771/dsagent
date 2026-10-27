@@ -132,7 +132,10 @@ func resolveExisting(p string) string {
 	}
 }
 
-func runTool(ctx context.Context, root string, tc ToolCall) string {
+// runTool executes one tool call. shellLimit is the per-command cap for
+// run_shell; the caller reads it from the config so the number is a setting
+// rather than a constant of the binary.
+func runTool(ctx context.Context, root string, tc ToolCall, shellLimit time.Duration) string {
 	var args map[string]any
 	if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
 		return "BAD ARGS: " + err.Error() + " â€” retry with valid JSON matching the schema"
@@ -211,7 +214,12 @@ func runTool(ctx context.Context, root string, tc ToolCall) string {
 		return fmt.Sprintf("OK: wrote %d bytes to %s", len(content), str("path"))
 
 	case "run_shell":
-		cmdCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+		// Per-command cap, from Settings > Agent. The parent ctx still bounds the
+		// call as well: a cancelled run kills the child wherever it is.
+		if shellLimit <= 0 {
+			shellLimit = defaultShellTimeoutSec * time.Second
+		}
+		cmdCtx, cancel := context.WithTimeout(ctx, shellLimit)
 		defer cancel()
 
 		// The shell itself is platform-specific (cmd.exe vs sh). That split lives
@@ -236,6 +244,15 @@ func runTool(ctx context.Context, root string, tc ToolCall) string {
 				// The command ran; it just left a background process behind, so
 				// this is not a failure and must not read like one.
 				return s + "\nNOTE: the command left a background process holding its output pipe; any further output was cut off."
+			}
+			// Say which of the two possible endings happened, and name the knob:
+			// "exit status: killed" tells nobody that the limit, not the command,
+			// was the problem.
+			if ctx.Err() != nil {
+				return s + "\nCANCELLED: the run was stopped while this command was still running."
+			}
+			if errors.Is(cmdCtx.Err(), context.DeadlineExceeded) {
+				return s + fmt.Sprintf("\nTIMEOUT: still running after %s, so it was killed. If it needs longer, raise \"Shell command timeout\" in Settings (shell_timeout_sec) and run it again.", shellLimit)
 			}
 			return s + "\nEXIT: " + err.Error()
 		}

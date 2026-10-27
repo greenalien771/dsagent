@@ -45,6 +45,13 @@ type Config struct {
 	IdleTimeoutSec int `json:"idle_timeout_sec"`
 	RunTimeoutMin  int `json:"run_timeout_min"`
 
+	// ShellTimeoutSec is the per-command cap for run_shell. It is deliberately
+	// separate from the two watchdog numbers above: those end a whole task,
+	// while this one ends a single child process. A build, a test suite or a
+	// package install routinely needs longer than a model turn, and the old
+	// hardcoded 60s meant the only way to run one was to not use the agent.
+	ShellTimeoutSec int `json:"shell_timeout_sec"`
+
 	// KeySource records where the key came from ("env" or "store") so the UI
 	// can explain why edits are ignored. Never contains the key itself.
 	KeySource string `json:"-"`
@@ -62,6 +69,10 @@ const (
 	maxIdleTimeoutSec     = 1800
 	minRunTimeoutMin      = 1
 	maxRunTimeoutMin      = 240
+
+	defaultShellTimeoutSec = 60
+	minShellTimeoutSec     = 5
+	maxShellTimeoutSec     = 3600
 )
 
 // clampInt pins a hand-edited or posted value into [lo, hi].
@@ -96,7 +107,8 @@ type legacyConfig struct {
 
 func loadConfig() *Config {
 	c := &Config{Model: "deepseek-flash", MaxSteps: 25,
-		IdleTimeoutSec: defaultIdleTimeoutSec, RunTimeoutMin: defaultRunTimeoutMin}
+		IdleTimeoutSec: defaultIdleTimeoutSec, RunTimeoutMin: defaultRunTimeoutMin,
+		ShellTimeoutSec: defaultShellTimeoutSec}
 
 	raw, err := os.ReadFile(configPath())
 	if err == nil {
@@ -105,7 +117,8 @@ func loadConfig() *Config {
 			// the unreadable original for forensics.
 			os.Rename(configPath(), configPath()+".corrupt")
 			c = &Config{Model: "deepseek-flash", MaxSteps: 25,
-				IdleTimeoutSec: defaultIdleTimeoutSec, RunTimeoutMin: defaultRunTimeoutMin}
+				IdleTimeoutSec: defaultIdleTimeoutSec, RunTimeoutMin: defaultRunTimeoutMin,
+				ShellTimeoutSec: defaultShellTimeoutSec}
 		} else {
 			// Migrate a plaintext key out of config.json as soon as we see one.
 			var legacy legacyConfig
@@ -138,8 +151,12 @@ func loadConfig() *Config {
 	if c.RunTimeoutMin <= 0 {
 		c.RunTimeoutMin = defaultRunTimeoutMin
 	}
+	if c.ShellTimeoutSec <= 0 {
+		c.ShellTimeoutSec = defaultShellTimeoutSec
+	}
 	c.IdleTimeoutSec = clampInt(c.IdleTimeoutSec, minIdleTimeoutSec, maxIdleTimeoutSec)
 	c.RunTimeoutMin = clampInt(c.RunTimeoutMin, minRunTimeoutMin, maxRunTimeoutMin)
+	c.ShellTimeoutSec = clampInt(c.ShellTimeoutSec, minShellTimeoutSec, maxShellTimeoutSec)
 
 	if c.WorkDir == "" {
 		c.WorkDir, _ = os.Getwd()
@@ -244,32 +261,34 @@ func clearAPIKey(c *Config) error {
 // configView is everything the browser is allowed to know. Note the absence of
 // any key material: only a boolean and a masked fingerprint ever leave here.
 type configView struct {
-	Model          string `json:"model"`
-	WorkDir        string `json:"workdir"`
-	MaxSteps       int    `json:"max_steps"`
-	AutoApprove    bool   `json:"auto_approve"`
-	IdleTimeoutSec int    `json:"idle_timeout_sec"`
-	RunTimeoutMin  int    `json:"run_timeout_min"`
-	APIKeySet      bool   `json:"api_key_set"`
-	APIKeyHint     string `json:"api_key_hint,omitempty"`
-	APIKeySource   string `json:"api_key_source,omitempty"`
-	APIKeyEditable bool   `json:"api_key_editable"`
+	Model           string `json:"model"`
+	WorkDir         string `json:"workdir"`
+	MaxSteps        int    `json:"max_steps"`
+	AutoApprove     bool   `json:"auto_approve"`
+	IdleTimeoutSec  int    `json:"idle_timeout_sec"`
+	RunTimeoutMin   int    `json:"run_timeout_min"`
+	ShellTimeoutSec int    `json:"shell_timeout_sec"`
+	APIKeySet       bool   `json:"api_key_set"`
+	APIKeyHint      string `json:"api_key_hint,omitempty"`
+	APIKeySource    string `json:"api_key_source,omitempty"`
+	APIKeyEditable  bool   `json:"api_key_editable"`
 }
 
 func viewOf(c *Config) configView {
 	cfgMu.Lock()
 	defer cfgMu.Unlock()
 	return configView{
-		Model:          c.Model,
-		WorkDir:        c.WorkDir,
-		MaxSteps:       c.MaxSteps,
-		AutoApprove:    c.AutoApprove,
-		IdleTimeoutSec: c.IdleTimeoutSec,
-		RunTimeoutMin:  c.RunTimeoutMin,
-		APIKeySet:      c.APIKey != "",
-		APIKeyHint:     hintOf(c.APIKey),
-		APIKeySource:   c.KeySource,
-		APIKeyEditable: c.KeySource != "env",
+		Model:           c.Model,
+		WorkDir:         c.WorkDir,
+		MaxSteps:        c.MaxSteps,
+		AutoApprove:     c.AutoApprove,
+		IdleTimeoutSec:  c.IdleTimeoutSec,
+		RunTimeoutMin:   c.RunTimeoutMin,
+		ShellTimeoutSec: c.ShellTimeoutSec,
+		APIKeySet:       c.APIKey != "",
+		APIKeyHint:      hintOf(c.APIKey),
+		APIKeySource:    c.KeySource,
+		APIKeyEditable:  c.KeySource != "env",
 	}
 }
 
@@ -295,10 +314,11 @@ type configPatch struct {
 	AutoApprove *bool   `json:"auto_approve"`
 	// Watchdog timers. Out-of-range values are refused rather than clamped:
 	// a silently rewritten timeout is worse than one that did not save.
-	IdleTimeoutSec *int    `json:"idle_timeout_sec"`
-	RunTimeoutMin  *int    `json:"run_timeout_min"`
-	APIKey         *string `json:"api_key"`
-	ClearAPIKey    *bool   `json:"clear_api_key"`
+	IdleTimeoutSec  *int    `json:"idle_timeout_sec"`
+	RunTimeoutMin   *int    `json:"run_timeout_min"`
+	ShellTimeoutSec *int    `json:"shell_timeout_sec"`
+	APIKey          *string `json:"api_key"`
+	ClearAPIKey     *bool   `json:"clear_api_key"`
 }
 
 // applyPatch mutates the config and persists it.
@@ -378,6 +398,14 @@ func applyPatch(c *Config, p configPatch) error {
 			c.RunTimeoutMin = v
 		}
 	}
+	if p.ShellTimeoutSec != nil {
+		if v := *p.ShellTimeoutSec; v < minShellTimeoutSec || v > maxShellTimeoutSec {
+			errs = append(errs, fmt.Sprintf("shell command timeout must be between %d and %d seconds",
+				minShellTimeoutSec, maxShellTimeoutSec))
+		} else {
+			c.ShellTimeoutSec = v
+		}
+	}
 
 	if err := saveConfig(c); err != nil {
 		errs = append(errs, "could not save config: "+err.Error())
@@ -430,6 +458,22 @@ func (c *Config) watchdogLimits() (idle, hard time.Duration) {
 		hard = defaultRunTimeoutMin * time.Minute
 	}
 	return idle, hard
+}
+
+// shellTimeout is the per-command cap run_shell applies to one child process.
+//
+// Read per call rather than snapshotted with runSettings: it bounds a single
+// command, so a Save that lands mid-run should govern the next command rather
+// than the next task. Anything nonsense falls back to the default, because a
+// zero here would be an instantly-killed shell.
+func (c *Config) shellTimeout() time.Duration {
+	cfgMu.Lock()
+	defer cfgMu.Unlock()
+	secs := c.ShellTimeoutSec
+	if secs <= 0 {
+		secs = defaultShellTimeoutSec
+	}
+	return time.Duration(clampInt(secs, minShellTimeoutSec, maxShellTimeoutSec)) * time.Second
 }
 
 // credentials returns the model and key together under one lock, so a
