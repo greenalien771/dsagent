@@ -50,4 +50,24 @@ jobs:
 
       - run: go build ./...
 
+      # A failing test on a runner whose log nobody can open is a dead end: the
+      # job log needs a token, so all a reader of the checks API gets is "exit
+      # code 1". Re-emitting each failure as an ::error annotation puts the test
+      # name and the assertion into check-runs, which is readable without
+      # credentials.
+      - name: go test
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -o pipefail
+          status=0
+          go test ./... 2>&1 | tee /tmp/go-test.log || status=$?
+          if [ "$status" -ne 0 ]; then
+            grep -E -- '--- FAIL|_test\.go:[0-9]+:|^FAIL|^panic:' /tmp/go-test.log \
+              | head -30 \
+              | while IFS= read -r line; do echo "::error::$line"; done
+            exit "$status"
+          fi
+
       - run: go test ./...
+        if: runner.os == 'Windows'
