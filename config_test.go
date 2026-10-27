@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -24,8 +23,12 @@ func withTempConfig(t *testing.T) {
 	// "no key file was stored" assertions assume is not the case.
 	t.Setenv("HOME", dir)
 	t.Setenv(keyEnvVar, "")
-	// os.UserConfigDir reads APPDATA on Windows; make sure the sub-dir exists.
-	if err := os.MkdirAll(filepath.Join(dir, "dsagent"), 0o700); err != nil {
+	// Create the directory the code will actually use, not a guess at it: the
+	// config path is APPDATA\\dsagent on Windows, XDG_CONFIG_HOME/dsagent on
+	// Linux and $HOME/Library/Application Support/dsagent on macOS. Hardcoding
+	// dir/dsagent passed on Windows and Linux and left the macOS path missing,
+	// so a test that writes config.json directly failed with ENOENT there.
+	if err := os.MkdirAll(configDir(), 0o700); err != nil {
 		t.Fatal(err)
 	}
 }
