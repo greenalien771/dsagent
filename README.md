@@ -186,9 +186,22 @@ go vet ./...
 go test ./...
 ```
 
-CI (`.github/workflows/ci.yml`) runs `gofmt`, `go vet`, `go build` and
-`go test` on Linux, macOS and Windows, pinned to the Go version in `go.mod` so
-the stated minimum is the version actually exercised.
+`go vet` type-checks only the target it is built for, so a clean run on Windows
+says nothing about darwin or linux: an untagged `SysProcAttr.CmdLine` in
+`tools.go` once passed `go vet` on Windows and failed on the first unix runner
+it reached. CI therefore vets the other two targets as well, from Linux:
+
+```sh
+GOOS=darwin go vet ./...
+GOOS=windows go vet ./...
+```
+
+`go vet` builds nothing, links nothing and runs nothing, so `go build` and
+`go test` are the steps that actually prove the tree compiles and works.
+
+CI (`.github/workflows/ci.yml`) runs `gofmt`, `go vet` (plus the cross-vet
+above), `go build` and `go test` on Linux, macOS and Windows, pinned to the Go
+version in `go.mod` so the stated minimum is the version actually exercised.
 
 ## License
 
