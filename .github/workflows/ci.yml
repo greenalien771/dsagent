@@ -15,7 +15,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # macos-latest is arm64, and that pool is the one GitHub documents as
+        # capacity-constrained: on run 40373502766 the job was never acquired
+        # ("The job was not acquired by Runner of type hosted even after multiple
+        # attempts") and was cancelled after ~15 minutes without running a single
+        # step. macos-15-intel is the x64 macOS image, a far larger pool. macOS
+        # coverage matters more than macOS-on-arm64; switch this back to
+        # macos-latest once the arm64 queue stops deciding whether the job runs.
+        os: [ubuntu-latest, windows-latest, macos-15-intel]
     steps:
       - uses: actions/checkout@v4
 
@@ -28,6 +35,16 @@ jobs:
       - name: gofmt
         if: runner.os == 'Linux'
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+
+      # The build tags matter: a Windows-only syscall (SysProcAttr.CmdLine) sat in
+      # tools.go untagged, so `go vet` passed here on Windows and failed on the
+      # first unix runner it ever reached. Vetting the other targets on Linux
+      # catches that class in ~5 seconds without waiting for the matrix.
+      - name: cross-vet
+        if: runner.os == 'Linux'
+        run: |
+          GOOS=darwin go vet ./...
+          GOOS=windows go vet ./...
 
       - run: go vet ./...
 

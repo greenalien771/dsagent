@@ -17,6 +17,12 @@ func withTempConfig(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("APPDATA", dir)
 	t.Setenv("XDG_CONFIG_HOME", dir)
+	// macOS reads neither of those: os.UserConfigDir is $HOME/Library/Application
+	// Support there. Without this, every test on macOS shared the runner's real
+	// dsagent config dir, so a key sealed by one test was already on disk for the
+	// next one - which is exactly what the "a fresh load must recover it" and
+	// "no key file was stored" assertions assume is not the case.
+	t.Setenv("HOME", dir)
 	t.Setenv(keyEnvVar, "")
 	// os.UserConfigDir reads APPDATA on Windows; make sure the sub-dir exists.
 	if err := os.MkdirAll(filepath.Join(dir, "dsagent"), 0o700); err != nil {

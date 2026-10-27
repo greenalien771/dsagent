@@ -926,6 +926,11 @@ func (a *Agent) parseStream(body io.Reader, emit func(string, string)) (Msg, err
 	return out, nil
 }
 
+// cancelledToolResult is what a tool call returns when the run was cancelled
+// before the call had any effect. It exists so the transcript can keep its one
+// hard promise: a call reported as "not executed" has provably not executed.
+const cancelledToolResult = "ERROR: not run - the run was cancelled before this tool call started, so it changed nothing. Do not retry it unless the user asks for the task again."
+
 func (a *Agent) execTool(ctx context.Context, root string, tc ToolCall, mode string, emit func(string, string)) (result string) {
 	// Safety net: catch any panics from tools so the server doesn't crash
 	defer func() {
@@ -935,6 +940,17 @@ func (a *Agent) execTool(ctx context.Context, root string, tc ToolCall, mode str
 	}()
 
 	emit("tool", tc.Function.Name+" "+tc.Function.Arguments)
+
+	// A cancelled run must not touch the machine. The loop checks the context
+	// between calls, but that alone is not enough: the cancel can land inside
+	// this call - Stop pressed, the tab closed, the watchdog fired - after the
+	// loop's check and before the side effect. Refusing here, ahead of the repeat
+	// ledger, the risk classifier, the approval card and runTool, is what makes
+	// "not executed" in the transcript literally true instead of an apology
+	// printed after the write already happened.
+	if ctx.Err() != nil {
+		return cancelledToolResult
+	}
 
 	// Backstop for the filtered schema: a model that still asks for a disabled
 	// tool gets a refusal instead of a side effect.
@@ -1004,6 +1020,12 @@ func (a *Agent) execTool(ctx context.Context, root string, tc ToolCall, mode str
 			delete(a.approvals, tc.ID)
 			a.mu.Unlock()
 			return "cancelled by user"
+		}
+		// The card was answered, but the run may have been stopped while it was
+		// on screen: a click that was already in flight must not revive a run the
+		// user cancelled, so the context decides here, not the click.
+		if ctx.Err() != nil {
+			return cancelledToolResult
 		}
 	}
 	// Redact before the result enters the transcript: what goes back to the model

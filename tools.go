@@ -15,7 +15,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -215,18 +214,10 @@ func runTool(ctx context.Context, root string, tc ToolCall) string {
 		cmdCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 		defer cancel()
 
-		var c *exec.Cmd
-		command := str("command")
-
-		if runtime.GOOS == "windows" {
-			// Bypass Go's syscall.EscapeArg so cmd.exe gets the raw string
-			c = exec.CommandContext(cmdCtx, "cmd")
-			c.SysProcAttr = &syscall.SysProcAttr{
-				CmdLine: `/c ` + command,
-			}
-		} else {
-			c = exec.CommandContext(cmdCtx, "sh", "-c", command)
-		}
+		// The shell itself is platform-specific (cmd.exe vs sh). That split lives
+		// in shell_windows.go / shell_other.go, because SysProcAttr has different
+		// fields per OS and naming them here did not compile on Linux or macOS.
+		c := shellCommand(cmdCtx, str("command"))
 		c.Dir = root
 		// Never hand this agent's own credentials to a child process: a bare
 		// `env`/`set` would otherwise print the key straight into the transcript.
