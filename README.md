@@ -1,8 +1,9 @@
-<p align="center">
-  <img src="ui/logo.svg" width="76" height="76" alt="dsagent">
-</p>
-
-<h1 align="center">dsagent</h1>
+<!-- Logo and title share one block so the title sits right under the mark, and
+     the style attribute grows it where the renderer keeps inline CSS. -->
+<h1 align="center" style="font-size:2.6em;">
+  <img src="ui/logo.svg" width="132" height="132" alt="dsagent"><br>
+  dsagent
+</h1>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Go-1.21%2B-blue" alt="Go 1.21+">
@@ -13,9 +14,9 @@
 
 A coding agent in one Go binary. It serves its own UI on loopback, talks to the
 DeepSeek `/chat/completions` API, and runs tools - list, read, write, shell,
-fetch - inside a working directory you choose. Mutating calls stop at an approval
-card before they run, and a call classified dangerous needs the confirmation word
-typed into that card.
+fetch, screenshot - inside a working directory you choose. Mutating calls stop
+at an approval card before they run, and a call classified dangerous needs the
+confirmation word typed into that card.
 
 No telemetry, no hosted backend, no CDN. The UI, its vendored JavaScript and the
 agent loop are all inside the executable.
