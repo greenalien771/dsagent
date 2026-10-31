@@ -8,6 +8,7 @@
 # Local scratch
 *.corrupt
 *.tmp
+/_railtest/
 
 # Editors and OS junk
 .idea/
