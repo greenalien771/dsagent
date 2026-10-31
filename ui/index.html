@@ -247,6 +247,12 @@
        overshooting into the card by the round cap's radius. */
     .thread > svg.rail path.stubs { stroke-linecap: butt; }
     .thread > :not(.hero):not(.rail) { position: relative; margin-left: 36px; margin-bottom: 14px; z-index: 1; }
+    /* Where a marker sits, as one pair of numbers for the whole thread. The
+       avatar slot (.mside, a 22px box at left:-36px / top:0) has its centre on
+       this point, and so does the 16px dot below, and railNodes() reads the
+       same two values instead of stating them a second time - which is how the
+       dot and the connector had drifted three pixels apart. */
+    .thread { --node-x: -25px; --node-y: 11px; --node-r: 8px; }
     /* The archive notice is a banner about the whole thread, not a step in it. */
     .thread > .archive-bar { margin-left: 0; }
     .thread > .tool-card::after,
@@ -256,8 +262,13 @@
     .thread > .plan-actions::after,
     .thread > .live-row::after {
       /* 16px across, not 12: `*` does not match pseudo-elements, so the 2px
-         border adds to the declared size. Centre = padding box left -33 +8. */
-      content: ''; position: absolute; left: -33px; top: 13px; width: 12px; height: 12px;
+         border adds to the declared size. The offset is minus half of that 16,
+         so the circle is centred on --node-x/--node-y instead of hanging below
+         the line it is supposed to thread. */
+      content: ''; position: absolute;
+      left: calc(var(--node-x) - var(--node-r));
+      top: calc(var(--node-y) - var(--node-r));
+      width: 12px; height: 12px;
       border-radius: 50%; background: var(--bg); border: 2px solid var(--border-2);
     }
     .thread > .tool-card[data-state="error"]::after { border-color: var(--danger); }
@@ -306,6 +317,9 @@
 
     /* messages - avatar on the rail, content in a measured column */
     .msg { display: flex; align-items: flex-start; gap: 14px; animation: fade-up .2s var(--ease); }
+    /* The avatar fills the marker slot: -36px + 11px is the same -25px / 11px
+       centre the rail uses for a step's dot, so a message circle and a step
+       node sit on one line. */
     .msg .mside { position: absolute; left: -36px; top: 0; width: 22px; height: 22px; }
     /* No halo ring: the rail has to meet the circle's border. A background-
        coloured box-shadow punched a 4px gap above and below every avatar, which
@@ -556,7 +570,14 @@
       background: var(--bg); border-left: 1px solid var(--border);
     }
     .app.no-right .right { display: none; }
-    .right-head { display: flex; align-items: center; gap: 6px; padding: 8px 8px 8px 10px; border-bottom: 1px solid var(--border); }
+    .right-head { position: relative; display: flex; align-items: center; gap: 6px; padding: 8px 8px 8px 10px; }
+    /* The rule under the tabs is inset to the same 12px every section rule
+       below it uses. Drawn edge to edge it read as a seam on the panel border
+       rather than a divider, and it sat tight under the two tab buttons. */
+    .right-head::after {
+      content: ''; position: absolute; left: 12px; right: 12px; bottom: 0;
+      height: 1px; background: var(--border);
+    }
     .tabs { display: flex; gap: 2px; flex: 1; }
     .tab { flex: 1; padding: 4px 8px; border-radius: 5px; font-size: 11px; font-weight: 500; color: var(--muted-2); }
     .tab:hover { color: var(--text-2); background: var(--hover); }
@@ -650,7 +671,9 @@
     }
     .overlay.open { display: flex; animation: fade .14s var(--ease); }
     @keyframes fade { from { opacity: 0; } }
-    .key-hint { font-size: 11px; color: var(--muted-2); line-height: 1.5; margin-top: 6px; }
+    /* One hint line everywhere - the settings panes and the other windows - so
+       a field's explanation looks the same whichever pane it is in. */
+    .key-hint, .pref-hint { font-size: 11px; color: var(--muted-2); line-height: 1.5; margin-top: 6px; }
     .key-hint b { color: var(--text-2); }
     .key-row { display: flex; align-items: center; gap: 10px; margin-top: 7px; flex-wrap: wrap; }
     .btn-link { font-size: 11px; color: var(--accent); text-decoration: none; }
@@ -659,12 +682,14 @@
     .key-state { font-size: 9.5px; font-family: var(--mono); padding: 2px 6px; border-radius: 20px; text-transform: none; letter-spacing: 0; }
     .key-state.set { color: var(--success-text); background: var(--success-soft); border: 1px solid rgba(111, 155, 128, .26); }
     .key-state.unset { color: var(--warn-text); background: var(--warn-soft); border: 1px solid rgba(176, 161, 132, .24); }
-    .perm-row { display: flex; gap: 9px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px 11px; margin-top: 5px; }
+    /* A preference row is a card-shaped field: same width cap and same bottom
+       rhythm as .sw-field, so the Interface pane lines up with Connection. */
+    .perm-row { display: flex; gap: 9px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px 11px; margin: 0 0 12px; max-width: 560px; }
     .perm-row input[type="checkbox"] { width: 14px; height: 14px; margin-top: 2px; accent-color: var(--accent-2); flex-shrink: 0; }
     .perm-label { font-size: 12px; color: var(--text-2); font-weight: 550; cursor: pointer; }
     .perm-warn { font-size: 11px; color: var(--muted); line-height: 1.5; margin-top: 4px; }
     .perm-warn b { color: var(--warn-text); }
-    .perm-warn code { font-family: var(--mono); font-size: 10px; background: var(--code-bg); padding: 1px 4px; border-radius: 3px; }
+
     .btn-always {
       padding: 5px 12px; border-radius: 6px; font-size: 11.5px; font-weight: 550;
       border: 1px solid rgba(176, 161, 132, .38); color: var(--warn-text);
@@ -728,8 +753,12 @@
     }
     .settings-win input:focus { border-color: var(--accent); }
     .settings-win input:disabled { opacity: .55; cursor: not-allowed; }
+    /* A step count, a timeout and a limit are the same kind of value: one
+       fixed narrow box, so the four number fields in Agent read as siblings
+       instead of four bars stretched to the column width. */
+    .settings-win input[type="number"] { width: 110px; }
     .settings-win .input-mono { font-family: var(--mono); font-size: 11.5px; }
-    .sw-sep { height: 1px; background: var(--border); margin: 18px 0; max-width: 560px; }
+
     .sw-card { border: 1px solid var(--border); border-radius: 8px; padding: 11px 13px; background: var(--bg); max-width: 560px; margin-bottom: 12px; }
     .sw-card h5 { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; color: var(--text-2); margin-bottom: 5px; }
     .sw-card h5 svg { width: 13px; height: 13px; }
@@ -764,15 +793,17 @@
     .sw-pane .sw-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
     /* Preference rows: label, one-line explanation, checkbox - the same row
        shape the Always Allow switch uses, so the panes read as one form. */
-    #sec-interface .perm-row { margin-top: 0; margin-bottom: 8px; max-width: 560px; }
-    .pref-hint { font-size: 11px; color: var(--muted); line-height: 1.5; margin-top: 4px; }
-    .pref-hint code { font-family: var(--mono); font-size: 10px; background: var(--code-bg); padding: 1px 4px; border-radius: 3px; }
+
     .step-picks { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
     .step-picks button {
       font-family: var(--mono); font-size: 10.5px; padding: 3px 9px; border-radius: 20px;
       border: 1px solid var(--border); color: var(--muted-2);
     }
     .step-picks button:hover { border-color: var(--border-2); color: var(--text-2); background: var(--hover); }
+    /* The label in front of the chips is a hint, not a field label: the class
+       carries the one thing it needs (no top margin) instead of an inline
+       style repeated on every picker. */
+    .step-picks .picks-lbl { margin: 0; }
     /* The checklist retires itself; the whole feature (tab, link, menu entry)
        is hidden through this one class. */
     .onb-off { display: none !important; }
@@ -1243,7 +1274,7 @@
             <input type="number" id="cfg-maxsteps" min="1" max="200" step="1">
             <div class="key-hint">One step is one model turn. Allowed range: 1-200.</div>
             <div class="step-picks">
-              <span class="pref-hint" style="margin:0 2px 0 0">Common values</span>
+              <span class="pref-hint picks-lbl">Common values</span>
               <button onclick="setSteps(10)">10</button>
               <button onclick="setSteps(25)">25</button>
               <button onclick="setSteps(50)">50</button>
@@ -1256,7 +1287,7 @@
             <input type="number" id="cfg-idle" min="10" max="1800" step="10">
             <div class="key-hint">A run that produces no output for this long is treated as stuck and cancelled. Allowed range: 10-1800.</div>
             <div class="step-picks">
-              <span class="pref-hint" style="margin:0 2px 0 0">Common values</span>
+              <span class="pref-hint picks-lbl">Common values</span>
               <button onclick="setIdle(60)">60</button>
               <button onclick="setIdle(120)">120</button>
               <button onclick="setIdle(300)">300</button>
@@ -1269,7 +1300,7 @@
             <input type="number" id="cfg-runlimit" min="1" max="240" step="1">
             <div class="key-hint">Wall-clock cap for one task, however busy it looks. Allowed range: 1-240.</div>
             <div class="step-picks">
-              <span class="pref-hint" style="margin:0 2px 0 0">Common values</span>
+              <span class="pref-hint picks-lbl">Common values</span>
               <button onclick="setRunLimit(5)">5</button>
               <button onclick="setRunLimit(25)">25</button>
               <button onclick="setRunLimit(60)">60</button>
@@ -1282,7 +1313,7 @@
             <input type="number" id="cfg-shelltimeout" min="5" max="3600" step="5">
             <div class="key-hint">How long a single <code>run_shell</code> command may run before it is killed. Long builds and test suites need more than the 60s default; the whole task is still bounded by the task time limit. Allowed range: 5-3600.</div>
             <div class="step-picks">
-              <span class="pref-hint" style="margin:0 2px 0 0">Common values</span>
+              <span class="pref-hint picks-lbl">Common values</span>
               <button onclick="setShellTimeout(60)">60</button>
               <button onclick="setShellTimeout(300)">300</button>
               <button onclick="setShellTimeout(600)">600</button>
@@ -1365,8 +1396,6 @@
             </div>
             <div class="perm-warn">&#9888; <b>Dangerous.</b> Ordinary approval prompts are skipped: <code>run_shell</code> and <code>write_file</code> run unattended. Commands flagged as dangerous still stop and ask - this switch can never approve those, and it is ignored in Plan mode.</div>
           </div>
-
-          <div class="sw-sep"></div>
 
           <div class="sw-card">
             <h5><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l7 3v6c0 4.2-2.9 7.6-7 9-4.1-1.4-7-4.8-7-9V6z"></path><path d="M9 12l2 2 4-4"></path></svg> Dangerous commands always ask</h5>
@@ -2301,6 +2330,12 @@ function clearStoredChats() {
 // message, or the node-dot centre of every other entry.
 function railNodes(thread) {
   const base = thread.getBoundingClientRect();
+  // The marker centre comes from the stylesheet: the dot is positioned from
+  // --node-x/--node-y in CSS and the line from the same two values here, so
+  // the two can no longer disagree about where the rail is.
+  const cs = getComputedStyle(thread);
+  const nx = parseFloat(cs.getPropertyValue('--node-x')) || -25;
+  const ny = parseFloat(cs.getPropertyValue('--node-y')) || 11;
   const nodes = [];
   Array.from(thread.children).forEach((child) => {
     if (child.classList.contains('hero') || child.classList.contains('rail')) return;
@@ -2310,14 +2345,14 @@ function railNodes(thread) {
     const side = child.querySelector(':scope > .mside');
     const av = side ? side.getBoundingClientRect() : null;
     // Both markers are centres: the avatar is a real box (measure it), the dot
-    // is a ::after of 12px + a 2px border = 16px at left:-33px / top:13px
-    // against the entry's PADDING box - hence clientLeft, without which every
-    // bordered card (tool cards, approvals, errors) pulled the line 1px off its
-    // own circle.
+    // is a ::after of 12px + a 2px border = 16px centred on --node-x/--node-y.
+    // Positions are read against the entry's PADDING box - hence clientLeft and
+    // clientTop, without which every bordered card (tool cards, approvals,
+    // errors) pulled the line off its own circle.
     const edge = r.left + (child.clientLeft || 0);
     nodes.push({
-      x: (av ? av.left + av.width / 2 : edge - 25) - base.left,
-      y: (av ? av.top + av.height / 2 : r.top + 19) - base.top,
+      x: (av ? av.left + av.width / 2 : edge + nx) - base.left,
+      y: (av ? av.top + av.height / 2 : r.top + (child.clientTop || 0) + ny) - base.top,
       // ex is the entry's own left edge: where its stub has to end, on the
       // inside of a card's border, so the rail touches the message itself.
       ex: edge - base.left
