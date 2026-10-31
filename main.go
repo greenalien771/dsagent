@@ -3,7 +3,6 @@ package main
 import (
 	"embed"
 	"encoding/json"
-	"fmt"
 	"io/fs"
 	"net"
 	"net/http"
@@ -64,8 +63,11 @@ func main() {
 	url := "http://" + ln.Addr().String()
 	go http.Serve(ln, guard(mux))
 
-	// The bound URL is printed so scripts and headless runs can find the port.
-	fmt.Println("dsagent listening on " + url)
+	// The banner ends with the bound URL, which is what scripts and headless runs
+	// scrape to learn the port. It is printed from the same config the agent was
+	// built with, so what it says about the workspace, the key and the approval
+	// gate is what this process will actually do.
+	printBanner(os.Stdout, url, cfg)
 
 	// -no-browser is for automated checks; a normal launch opens the UI.
 	if !hasArg("-no-browser") {

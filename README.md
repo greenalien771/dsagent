@@ -45,6 +45,14 @@ is taken it falls back to a free one and prints the URL it actually got (chat
 history lives in browser `localStorage`, which is partitioned per port, so a
 different port means a fresh transcript).
 
+Startup prints a short banner: the mark, then the model, the sandbox directory,
+whether a key is loaded, the approval posture, the limits and where the config
+lives - the state that is otherwise invisible until a tool call fails or an
+approval card does not appear. It is plain 7-bit ASCII, so it renders the same in
+cmd.exe, PowerShell and any other terminal. The last line stays
+`dsagent listening on <url>`, which is the line to scrape for the port actually
+bound.
+
 `-no-browser` skips launching the browser - useful for scripts and headless runs:
 
 ```sh
@@ -176,6 +184,7 @@ it.
 | `safety.go` | command risk classifier |
 | `guard.go` | host/origin guards and security headers |
 | `config.go` | config load/save, key storage, secret redaction |
+| `banner.go` | the ASCII startup banner: mark plus the launch state |
 | `secret_windows.go`, `secret_other.go` | key sealing per platform |
 | `ui/index.html` | the whole front end, no build step |
 | `ui/vendor/` | vendored marked, DOMPurify, highlight.js - see its own README |
