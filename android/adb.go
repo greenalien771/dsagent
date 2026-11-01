@@ -1,10 +1,12 @@
 // Package android is a prototype of the Android side of dsagent: it drives a
 // phone over adb the way the desktop tools drive the local machine.
 //
-// It is deliberately small and self-contained. It knows how to list devices,
-// capture the screen, tap, swipe and read a slice of logcat, and nothing else
-// yet. See README.md next to this file for the design and for what is missing
-// before this could become a set of agent tools.
+// It lists devices, captures the screen, taps, swipes and reads a slice of
+// logcat, and it reports the two things a screen-alone API cannot: whether the
+// device was awake and unlocked when the frame was taken (Screen, Capture), and
+// what coordinate space the frame is in (Capture.Map). See README.md next to
+// this file for the design and for what is missing before this could become a
+// set of agent tools.
 package android
 
 import (
@@ -34,6 +36,15 @@ var ErrNoDevice = errors.New("android: device not found")
 // ErrDeviceNotReady means the device is attached but not usable - offline,
 // unauthorized, or refusing due to udev permissions.
 var ErrDeviceNotReady = errors.New("android: device not ready")
+
+// ErrScreenOff means the device is asleep or dozing. Input against a dark panel
+// succeeds and does nothing, which is worse than failing: it costs a step and
+// teaches the caller that the tap worked.
+var ErrScreenOff = errors.New("android: the device screen is off")
+
+// ErrLocked means the keyguard is showing, so a tap or swipe lands on the lock
+// screen instead of the app the caller believes it is driving.
+var ErrLocked = errors.New("android: the device is locked")
 
 // CommandError is what a failing adb call returns. It keeps adb's own words,
 // because adb reports most failures as exit status 1 with the reason on stderr
@@ -87,6 +98,14 @@ type Client struct {
 	Serial string
 	// Timeout caps one adb call. Zero means DefaultTimeout.
 	Timeout time.Duration
+	// AllowInputWhileLocked permits Tap and Swipe while the keyguard is up.
+	//
+	// Off by default, and that default is the lesson from the first run on real
+	// hardware: one ordinary swipe unlocked a locked phone, because it had no
+	// credential set. A tool that opens someone's phone because it meant to tap
+	// an app is a tool nobody should ship. Turn this on only when the gesture is
+	// meant to be a touch on the lock screen - which is what Unlock does.
+	AllowInputWhileLocked bool
 }
 
 // DefaultTimeout is the per-call cap when Client.Timeout is zero. adb can block
@@ -134,6 +153,10 @@ func (c *Client) Device(ctx context.Context, serial string) (Device, error) {
 // Screenshot captures the device screen with `exec-out screencap -p`. exec-out
 // is used rather than shell because `adb shell` would translate line endings
 // and corrupt the PNG.
+//
+// These are the pixels and nothing else. Capture is the call that also reports
+// the screen size and state, and it is the one a caller that intends to act on
+// the image should use: a valid PNG from a sleeping phone is entirely black.
 func (c *Client) Screenshot(ctx context.Context) ([]byte, error) {
 	out, err := c.run(ctx, "exec-out", "screencap", "-p")
 	if err != nil {
@@ -146,20 +169,44 @@ func (c *Client) Screenshot(ctx context.Context) ([]byte, error) {
 	return out, nil
 }
 
-// Tap sends one touch at x,y.
+// Tap sends one touch at x,y in device pixels - the space `input tap` uses. Use
+// TapCapture to tap where something appeared in a Capture.
+//
+// It refuses before touching adb when the panel is off or the keyguard is up,
+// because in both cases the touch cannot reach an app. See inputPreflight.
 func (c *Client) Tap(ctx context.Context, x, y int) error {
+	return c.tap(ctx, x, y, false)
+}
+
+func (c *Client) tap(ctx context.Context, x, y int, forced bool) error {
 	if x < 0 || y < 0 {
 		return fmt.Errorf("android: tap: negative coordinate %d,%d", x, y)
+	}
+	if !forced {
+		if err := c.inputPreflight(ctx); err != nil {
+			return err
+		}
 	}
 	_, err := c.run(ctx, "shell", "input", "tap", itoa(x), itoa(y))
 	return err
 }
 
-// Swipe drags from one point to another. A zero duration lets `input` use its
-// own default, which is the fastest a real drag gets.
+// Swipe drags from one point to another in device pixels. A zero duration lets
+// `input` use its own default, which is the fastest a real drag gets.
 func (c *Client) Swipe(ctx context.Context, from, to Point, duration time.Duration) error {
+	return c.swipe(ctx, from, to, duration, false)
+}
+
+// swipe is the one implementation; forced skips the preflight, for the gesture
+// that is itself meant to run on the lock screen.
+func (c *Client) swipe(ctx context.Context, from, to Point, duration time.Duration, forced bool) error {
 	if from.X < 0 || from.Y < 0 || to.X < 0 || to.Y < 0 {
 		return fmt.Errorf("android: swipe: negative coordinate in %v -> %v", from, to)
+	}
+	if !forced {
+		if err := c.inputPreflight(ctx); err != nil {
+			return err
+		}
 	}
 	args := []string{"shell", "input", "swipe", itoa(from.X), itoa(from.Y), itoa(to.X), itoa(to.Y)}
 	if duration > 0 {
@@ -167,6 +214,90 @@ func (c *Client) Swipe(ctx context.Context, from, to Point, duration time.Durati
 	}
 	_, err := c.run(ctx, args...)
 	return err
+}
+
+// keycodeWakeup is KEYCODE_WAKEUP. It turns the panel on rather than toggling
+// it, so waking an already awake device leaves it awake.
+const keycodeWakeup = 224
+
+// Wake turns the screen on and returns the state afterwards. It does not unlock:
+// a pin, pattern or password cannot be supplied by this package, and pretending
+// otherwise is how a caller ends up in a retry loop.
+func (c *Client) Wake(ctx context.Context) (Screen, error) {
+	if _, err := c.run(ctx, "shell", "input", "keyevent", itoa(keycodeWakeup)); err != nil {
+		return Screen{}, err
+	}
+	return c.Screen(ctx)
+}
+
+// Unlock wakes the panel and swipes up, which is the unlock gesture on a device
+// with no credential set. It reports the state afterwards and returns ErrLocked
+// when the phone is still locked, which means a credential is set and has to be
+// entered on the device.
+//
+// The gesture is sized from the display rather than hardcoded: 720x1600 and
+// 1080x2400 do not share a magic coordinate, and a hardcoded swipe on the wrong
+// screen is a swipe from the wrong place.
+func (c *Client) Unlock(ctx context.Context) (Screen, error) {
+	screen, err := c.Screen(ctx)
+	if err != nil {
+		return screen, err
+	}
+	if screen.Known() && !screen.Awake() {
+		if screen, err = c.Wake(ctx); err != nil {
+			return screen, err
+		}
+	}
+	if screen.KeyguardKnown && !screen.Keyguard {
+		return screen, nil
+	}
+
+	display, err := c.Display(ctx)
+	if err != nil {
+		return screen, err
+	}
+	from := Point{X: display.Width / 2, Y: display.Height * 4 / 5}
+	to := Point{X: display.Width / 2, Y: display.Height / 5}
+	// forced: this is the one gesture that is supposed to happen while locked.
+	if err := c.swipe(ctx, from, to, 300*time.Millisecond, true); err != nil {
+		return screen, err
+	}
+	if screen, err = c.Screen(ctx); err != nil {
+		return screen, err
+	}
+	if !screen.KeyguardKnown {
+		return screen, fmt.Errorf("android: unlock: the keyguard state could not be read, so whether the gesture worked is unknown")
+	}
+	if screen.Keyguard {
+		return screen, fmt.Errorf("%w: still locked after the wake-and-swipe, so a pin, pattern or password is set and has to be entered on the device", ErrLocked)
+	}
+	return screen, nil
+}
+
+// inputPreflight refuses input that cannot reach an app.
+//
+// Two states each cost a step and both look like success from adb's side. While
+// the panel is off, `input tap` exits 0 having done nothing. While the keyguard
+// is up, the touch lands on the lock screen - and on a phone with no credential
+// that is enough to unlock it, which is how this prototype walked through a lock
+// screen it had no business touching.
+//
+// A dump that cannot be read is not a reason to refuse: the device may answer
+// nothing at all, and the tap itself will then report the real failure in adb's
+// own words, which is a better message than a guess made here.
+func (c *Client) inputPreflight(ctx context.Context) error {
+	// Whatever could be read decides; anything unreadable is not evidence of a
+	// problem. A device whose dumps this parser has never seen must not have its
+	// input refused, and the touch itself reports the real failure in adb's own
+	// words, which is a better message than a guess made here.
+	screen, _ := c.Screen(ctx)
+	if screen.Known() && !screen.Awake() {
+		return fmt.Errorf("%w (mWakefulness=%s): a tap or swipe would be a no-op, so call Wake first", ErrScreenOff, screen.Wakefulness)
+	}
+	if screen.KeyguardKnown && screen.Keyguard && !c.AllowInputWhileLocked {
+		return fmt.Errorf("%w (%s): the touch would land on the lock screen, so call Unlock when that is the intent", ErrLocked, screen.String())
+	}
+	return nil
 }
 
 // MaxLogcatLines is the cap on one Logcat call. A whole buffer is megabytes,

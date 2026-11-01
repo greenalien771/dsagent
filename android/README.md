@@ -15,9 +15,15 @@ next step is a decision about tools rather than a decision about parsing.
 |---|---|
 | `Client.Devices` | `adb devices -l` |
 | `Client.Device` | the same listing, filtered to one serial and refused unless ready |
-| `Client.Screenshot` | `adb -s S exec-out screencap -p` |
-| `Client.Tap` | `adb -s S shell input tap X Y` |
-| `Client.Swipe` | `adb -s S shell input swipe X1 Y1 X2 Y2 [MS]` |
+| `Client.Screen` | `dumpsys power` + `dumpsys window`, parsed into wakefulness and keyguard |
+| `Client.Display` | `wm size` + `wm density` |
+| `Client.Capture` | `exec-out screencap -p`, plus the state and size around it |
+| `Client.Screenshot` | the same capture, bytes only |
+| `Client.Tap` | `adb -s S shell input tap X Y` - refused while asleep or locked |
+| `Client.TapCapture` | the same, with the point given in the capture's own pixels |
+| `Client.Swipe` / `SwipeCapture` | `adb -s S shell input swipe X1 Y1 X2 Y2 [MS]` |
+| `Client.Wake` | `input keyevent 224` (KEYCODE_WAKEUP) |
+| `Client.Unlock` | wake, then the swipe-up gesture, then a report of what happened |
 | `Client.Logcat` | `adb -s S logcat -d -t N` |
 
 Deliberate choices, each of which cost someone an afternoon at some point:
@@ -26,6 +32,29 @@ Deliberate choices, each of which cost someone an afternoon at some point:
   `\r\n` and hands back a PNG that no decoder accepts. `Screenshot` also checks
   the 8-byte PNG signature, so a device that answers with `error: closed` fails
   as a capture error instead of as a corrupt file later.
+- **A valid PNG is not a view of anything.** A phone with the display off
+  returns a correct, entirely black 720x1600 frame - the signature check passes
+  and the caller has no way to tell. `Capture` therefore reports `Blank` with a
+  reason, decided by two witnesses: the `mWakefulness` dump (which catches a
+  sleeping phone whose frame happens to vary) and a sampled uniformity check on
+  the pixels (which catches a black frame on an awake phone).
+- **Nothing walks through the lock screen by accident.** `Tap` and `Swipe`
+  preflight the state and refuse with `ErrScreenOff` or `ErrLocked`. The first
+  run on real hardware unlocked a locked phone with one ordinary swipe, because
+  it had no credential set; that is the behaviour being removed.
+  `AllowInputWhileLocked` is the explicit way to say "this gesture is meant for
+  the lock screen", and `Unlock` is the call that does it on purpose.
+- **Filtering happens on the host.** `adb shell "dumpsys window | findstr ..."`
+  runs `findstr` on the phone, where it does not exist (`/system/bin/sh: findstr:
+  inaccessible or not found`). Every call passes its arguments through untouched
+  and the parsing is Go, so the same code runs against every device and against a
+  fake in the tests. `TestNoCallPipesIntoTheDeviceShell` is the net under that.
+- **Coordinates come with their space.** A model reading a 400-pixel-wide image
+  cannot guess device pixels, and a hardcoded gesture does not survive 720x1600
+  vs 1080x2400. `Capture` carries the image size, the device size and the scale;
+  `Capture.Map` (and `TapCapture` / `SwipeCapture`) convert a point in the image
+  into the touch the device understands, and refuse a point outside the image
+  rather than clamping it into a silent miss.
 - **adb's own words survive.** adb reports almost everything as exit status 1
   with the reason on stderr. `CommandError` keeps that text, because
   "device offline" and "no devices/emulators found" want different responses.
@@ -50,9 +79,19 @@ Deliberate choices, each of which cost someone an afternoon at some point:
 ```
 go build -o %TEMP%\androidprobe.exe .\cmd\androidprobe
 %TEMP%\androidprobe.exe devices
-%TEMP%\androidprobe.exe shot -serial R58M12345 -o screen.png
-%TEMP%\androidprobe.exe tap -serial R58M12345 540 1200
+%TEMP%\androidprobe.exe state
+%TEMP%\androidprobe.exe shot -width 400 -o screen.png -serial R58M12345
+%TEMP%\androidprobe.exe tap -serial R58M12345 -frame 400x889 200 340
+%TEMP%\androidprobe.exe unlock -serial R58M12345
 %TEMP%\androidprobe.exe logcat -serial R58M12345 -n 80
+```
+
+`shot` prints what it wrote and what the device was doing, including the size of
+the image, so the next call has the coordinate space it needs:
+
+```
+wrote screen.png (31204 bytes)
+image 400x889 of a 720x1600 device at 320 dpi (scale 0.56: pass coordinates in image pixels); screen awake, unlocked
 ```
 
 The CLI is not the product. It is the thing that makes the package falsifiable
@@ -71,22 +110,33 @@ In rough order of how much design each one needs:
    `android_input` belongs in the dangerous class, not merely in the
    approval-card class. Screenshots upload the screen, so they follow
    `screenshot`: prompt unless auto-approve, always in Plan and Ask mode.
-3. **Images into the vision path.** `Screenshot` returns PNG bytes, which is
-   exactly what the vision code already takes. The device's pixel size is not
-   part of the payload, so scaling hints (`x`/`y`/`width`/`height` on the
-   desktop `screenshot` tool) have nowhere to come from yet -
-   `adb shell wm size` would supply it.
-4. **Coordinates.** Tap takes device pixels, but a model reading a downscaled
-   capture will guess in the wrong space. A real tool needs the capture size
-   attached to the image it sends, or it will tap plausible nonsense.
+3. ~~**Images into the vision path.**~~ Done in the package: `Capture` returns
+   PNG bytes plus the size and state the vision code needs. Still to do at the
+   tool layer: putting `Capture.Describe()` into the tool result next to the
+   image.
+4. ~~**Coordinates.**~~ Done: `Capture` carries the image size, device size and
+   scale, `Map` converts image pixels to device pixels and refuses points outside
+   the frame, and `TapCapture`/`SwipeCapture` are the calls that use it.
 5. **`adb` discovery and failure.** Today a missing `adb` is an error message.
    A shipping version needs to know whether the platform-tools are installed,
    offer the same Windows-only honesty the desktop tools have, and not claim a
    tool exists where it cannot run.
 6. **Multi-device UX.** A serial list, a chosen default, and a clear refusal
    when several are attached - the config key that holds it.
-7. **Emulator as the test bed.** The unit tests need no device, but the
-   e2e path needs a booted emulator and a skip when there is none, the way
+7. **Emulator as the test bed.** The unit tests need no device, but the e2e path
+   needs a booted emulator and a skip when there is none, the way
    `window_e2e_test.go` skips on the wrong `GOOS`.
 8. **Only then**: install/pull/logcat-to-file, app launch, and anything that
    writes to the device.
+
+## Known limits
+
+- `Screen` and `Display` cost two adb round trips each, and the input preflight
+  pays for them on every tap. That is deliberate for a phone, and it is the
+  first thing to cache if a tool ever drives a long gesture sequence.
+- Keyguard parsing covers the keys Android 11 prints (`isKeyguardShowing`,
+  `mDreamingLockscreen`, `mKeyguardShowing`, `mShowingLockscreen`). A device that
+  prints none of them is reported as `keyguard unknown`, and input is attempted
+  rather than blocked.
+- A pin, pattern or password cannot be entered by this package. `Unlock` says so
+  instead of pretending.
