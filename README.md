@@ -12,11 +12,12 @@
   <img src="https://img.shields.io/badge/tools-9-blue" alt="9 tools">
 </p>
 
-A coding agent in one Go binary. It serves its own UI on loopback, talks to the
-DeepSeek `/chat/completions` API, and runs tools - list, read, write, shell,
-fetch, screenshot, window control - inside a working directory you choose. Mutating calls stop
-at an approval card before they run, and a call classified dangerous needs the
-confirmation word typed into that card.
+A coding agent in one Go binary. It serves its own UI on loopback, talks to an
+OpenAI-compatible `/chat/completions` endpoint - DeepSeek by default, with Qwen
+(DashScope) and z.ai (GLM) built in - and runs tools - list, read, write, shell,
+fetch, screenshot, window control - inside a working directory you choose.
+Mutating calls stop at an approval card before they run, and a call classified
+dangerous needs the confirmation word typed into that card.
 
 No telemetry, no hosted backend, no CDN. The UI, its vendored JavaScript and the
 agent loop are all inside the executable.
@@ -24,8 +25,9 @@ agent loop are all inside the executable.
 ## Requirements
 
 - Go 1.21 or newer to build (developed and tested against Go 1.27 on Windows).
-- A DeepSeek API key. Set `DEEPSEEK_API_KEY` or paste it into the settings panel
-  on first run.
+- An API key for one of the built-in providers. Put it in that provider's
+  environment variable (`DEEPSEEK_API_KEY`, `DASHSCOPE_API_KEY` or
+  `ZAI_API_KEY`), or paste it into Settings > Connection on first run.
 
 ## Build and run
 
@@ -45,11 +47,11 @@ is taken it falls back to a free one and prints the URL it actually got (chat
 history lives in browser `localStorage`, which is partitioned per port, so a
 different port means a fresh transcript).
 
-Startup prints a short banner: the mark, then the model, the sandbox directory,
-whether a key is loaded, the approval posture, the limits and where the config
-lives - the state that is otherwise invisible until a tool call fails or an
-approval card does not appear. It is plain 7-bit ASCII, so it renders the same in
-cmd.exe, PowerShell and any other terminal. The last line stays
+Startup prints a short banner: the mark, then the provider, the model, the
+sandbox directory, whether a key is loaded, the approval posture, the limits and
+where the config lives - the state that is otherwise invisible until a tool call
+fails or an approval card does not appear. It is plain 7-bit ASCII, so it renders
+the same in cmd.exe, PowerShell and any other terminal. The last line stays
 `dsagent listening on <url>`, which is the line to scrape for the port actually
 bound.
 
@@ -66,6 +68,36 @@ first, or build somewhere else to check compilation:
 go build -o "%TEMP%\check.exe" .
 ```
 
+## Providers
+
+Every endpoint speaks the same OpenAI Chat Completions shape, so a provider is a
+URL plus the vendor details a user has to know. The table lives in
+`providers.go` and is the single source of truth: the launch banner, the model
+suggestions and the image-capability check all read it.
+
+| `provider` | endpoint | key variable | default model |
+|---|---|---|---|
+| `deepseek` (default) | `https://api.deepseek.com/chat/completions` | `DEEPSEEK_API_KEY` | `deepseek-flash` |
+| `qwen` | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions` | `DASHSCOPE_API_KEY` | `qwen-plus` |
+| `zai` | `https://api.z.ai/api/paas/v4/chat/completions` | `ZAI_API_KEY` | `glm-5.3` |
+| `zai-coding` | `https://api.z.ai/api/coding/paas/v4/chat/completions` | `ZAI_API_KEY` | `glm-5.3` |
+
+- The two z.ai entries run the same models on the same key; `zai-coding` is the
+  path z.ai asks coding tools to use when the key belongs to a GLM Coding Plan
+  subscription instead of pay-per-token billing.
+- The Qwen default is the international DashScope region. For the
+  mainland-China one, set `base_url` to
+  `https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions`.
+- `provider` and `base_url` are `config.json` keys. Settings > Connection edits
+  the model and the key; the provider switch is not in the UI yet, so a hand
+  edit of the file is how you change it today. An unknown value falls back to
+  DeepSeek rather than failing to start, and a bad `base_url` is refused with a
+  message instead of being stored.
+- Settings are provider-scoped. Switching provider drops the endpoint override,
+  loads that provider's own key and, unless you name another, its default model
+  - because a vendor rejects another vendor's model name with a 400, and one
+  vendor's key on another's endpoint is worse than that.
+
 ## Configuration
 
 Stored in `config.json` under the OS config directory:
@@ -78,7 +110,9 @@ Stored in `config.json` under the OS config directory:
 
 | key | default | meaning |
 |---|---|---|
-| `model` | `deepseek-flash` | chat model id sent to the API |
+| `provider` | `deepseek` | which built-in endpoint to talk to (see above) |
+| `model` | the provider's own default | chat model id sent to the API |
+| `base_url` | *(the provider's endpoint)* | full chat-completions URL that replaces the provider's own |
 | `workdir` | directory dsagent was first started in | sandbox root for every tool |
 | `max_steps` | `25` | tool-call budget per task (form allows up to 200) |
 | `auto_approve` | `false` | skip approval cards for non-dangerous calls |
@@ -87,9 +121,13 @@ Stored in `config.json` under the OS config directory:
 | `shell_timeout_sec` | `60` | cap on one `run_shell` command, 5-3600 seconds |
 
 The API key is never written into `config.json` and never sent to the browser.
-`DEEPSEEK_API_KEY` in the environment wins over anything stored and is never
-persisted. A key pasted into the UI is sealed with the OS keystore (DPAPI on
-Windows) in `api_key.bin` next to the config.
+`DEEPSEEK_API_KEY`, `DASHSCOPE_API_KEY` or `ZAI_API_KEY` in the environment wins
+over anything stored, and is never persisted. A key pasted into the UI is sealed
+with the OS keystore (DPAPI on Windows) in `api_key_<family>.bin` next to the
+config - one file per vendor family (`api_key_deepseek.bin`, `api_key_qwen.bin`,
+`api_key_zai.bin`), so switching provider cannot hand the previous vendor's key
+to a different endpoint. A file from before providers existed, `api_key.bin`, is
+read as DeepSeek's key and removed when that key is.
 
 On macOS and Linux there is no keystore without cgo, so the key is base64-encoded
 in a `0600` file. That is obfuscation, not encryption - on those platforms prefer
@@ -100,16 +138,17 @@ the environment variable and keep nothing on disk.
 | mode | sees | can do |
 |---|---|---|
 | Agent | all tools | everything, each mutating call behind an approval card |
-| Plan | all tools | reads and investigates; `run_shell` always prompts, `write_file` is not offered |
-| Ask | read-only tools | answers questions, changes nothing |
+| Plan | every tool but the mutating ones | reads and investigates; `run_shell` always prompts, `write_file` and `window_control` are not offered |
+| Ask | read-only tools | answers questions, changes nothing; `list_windows` still asks before it lists what you have open |
 
 ## Images and the screen
 
-`deepseek-flash` accepts images, so a task can carry pictures as well as text.
+A task can carry pictures as well as text, for as long as the chosen model sees
+them. Which names do is a per-provider rule in `providers.go`, not a constant.
 
 - **Attach an image** with `+` in the composer, then **Add Image...** (PNG, JPEG,
-  GIF or WebP, up to 8 per task). **Add File...** in the same menu adds a text file
-  as context instead. Both apply to the next task only.
+  GIF or WebP, up to 8 per task and 20 MiB of pixels). **Add File...** in the same
+  menu adds a text file as context instead. Both apply to the next task only.
 - **The agent can look at your screen** with the `screenshot` tool. It captures the
   desktop, or one region via `x`/`y`/`width`/`height`, and `scale` shrinks a big
   region so it costs fewer tokens. Capture is a separate approval-gated step: it
@@ -134,11 +173,28 @@ the environment variable and keep nothing on disk.
   `until: appear|gone` to wait for the state you actually need. Launch, wait for
   the window, capture, minimize or close - the pause reports to the watchdog as
   activity, so a deliberate wait is never mistaken for a stalled run.
-- `deepseek-v4-pro` is text-only. An image is refused up front with a message that
-  says so, instead of failing mid-run.
+- **A text-only model is refused up front**, with a message saying so, instead of
+  failing mid-run: `deepseek-v4-pro` and the reasoner family, Qwen's non-VL
+  models, and `glm-5.3` itself. `deepseek-flash`, `glm-5.3-flash`, and the `-v`,
+  `vl` and `omni` names do see images.
 - Inline images are kept in the conversation so a follow-up question still works,
   but the total is capped - the oldest payloads become a line naming the image
   rather than several megabytes resent on every step.
+
+## Interface
+
+- The left rail lists sessions (`Alt+N` starts another), the right panel is the
+  activity list for the current one, and the composer carries the Agent / Plan /
+  Ask switch.
+- `Ctrl+K` is the command palette, `Ctrl+,` opens Settings (Connection, Agent,
+  Interface, Safety, Data, About), `Ctrl+O` opens the workspace window, `F1`
+  lists every binding.
+- The Interface pane holds browser preferences only - Enter sends, timestamps,
+  follow the run, fold successful tool cards, warn before closing mid-run, a
+  chime - and they never travel to the model.
+- Transcripts, preferences and the setup checklist live in this browser's
+  `localStorage`. Settings > Data reports what they cost and clears them; the
+  workspace, the API key and the server config are untouched by that.
 
 ## Security model
 
@@ -165,14 +221,17 @@ service. They are also the parts worth reading before you trust it:
   junctions before use, so a link inside the workspace cannot walk a read or a
   write outside it.
 - **No credential inheritance.** Child processes launched by `run_shell` get the
-  environment minus the LLM API keys, so a bare `set`/`env` cannot print the key
-  into the transcript.
+  environment minus every provider's API key variable, so a bare
+  `set`/`env`/`printenv` cannot print a key into the transcript.
 - **Redaction on the way out.** Model output, tool output and error strings are
-  all scrubbed for the live key and for anything shaped like one before they
+  all scrubbed for the live keys and for anything shaped like one before they
   reach the browser or the remote API.
 - **Fetch policy.** `web_fetch` refuses targets that resolve to this machine or
   the local network, re-checks every redirect hop and every resolved IP, and uses
   no proxy.
+- **One endpoint.** A run posts to the configured provider's URL, or the
+  `base_url` set in config.json. No tool call can redirect that, and the
+  endpoint is validated before it is saved.
 - **Watchdog.** A run with no progress for `idle_timeout_sec` (120s by default),
   or one that exceeds `run_timeout_min` (25 minutes by default), is cancelled.
   Both are set in the Agent pane and are checked when a run starts. Stop and
@@ -194,7 +253,8 @@ it.
 - Tool results are truncated at 8KB.
 - The fourth identical tool call in one run is refused rather than executed, so
   a model cannot spin on a command that keeps failing.
-- The API endpoint is fixed at build time (`baseURL` in `agent.go`).
+- `baseURL` in `agent.go` is a test hook now, not a setting: it points the client
+  at a local fake endpoint for the tests and is empty in every real build.
 
 ## Layout
 
@@ -203,10 +263,15 @@ it.
 | `main.go` | server setup, embedded UI, loopback binding, config/key endpoints |
 | `agent.go` | the run loop, streaming, approvals, watchdog, abort |
 | `tools.go` | tool schemas and implementations, path sandbox, fetch policy |
-| `safety.go` | command risk classifier |
+| `providers.go` | the provider registry: endpoints, key variables, model defaults, vision rules |
+| `safety.go` | command risk classifier and the per-tool approval rules |
 | `guard.go` | host/origin guards and security headers |
-| `config.go` | config load/save, key storage, secret redaction |
+| `config.go` | config load/save, per-provider key storage, secret redaction |
 | `banner.go` | the ASCII startup banner: mark plus the launch state |
+| `vision.go` | image validation, inline limits, attaching a capture to the conversation |
+| `screenshot.go` | the desktop capture path and its temporary-file sweep |
+| `window.go`, `window.ps1` | window enumeration, per-window capture, control and waits |
+| `shell_windows.go`, `shell_other.go` | how one shell line is handed to cmd.exe or /bin/sh |
 | `secret_windows.go`, `secret_other.go` | key sealing per platform |
 | `ui/index.html` | the whole front end, no build step |
 | `ui/vendor/` | vendored marked, DOMPurify, highlight.js - see its own README |
@@ -231,8 +296,14 @@ GOOS=windows go vet ./...
 `go vet` builds nothing, links nothing and runs nothing, so `go build` and
 `go test` are the steps that actually prove the tree compiles and works.
 
+The suite includes end-to-end tests: a real server on a loopback port for the
+abort path, and on Windows a real Notepad that is launched, waited for, captured
+while minimized and closed. Those windows tests are gated on `GOOS` and skip
+elsewhere, because the desktop tools are.
+
 CI (`.github/workflows/ci.yml`) runs `gofmt`, `go vet` (plus the cross-vet
-above), `go build` and `go test` on Linux, macOS and Windows, pinned to the Go
+above), `go build` and `go test` on Linux, macOS (`macos-15-intel`, because the
+arm64 pool is the capacity-constrained one) and Windows, pinned to the Go
 version in `go.mod` so the stated minimum is the version actually exercised.
 
 ## License
