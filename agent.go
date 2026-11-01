@@ -52,6 +52,9 @@ type ToolCall struct {
 type pendingApproval struct {
 	ch     chan bool
 	danger bool
+	// noAuto marks a call Always Allow must not answer either: it is not
+	// classified dangerous, but it is not recoverable by running it again.
+	noAuto bool
 }
 
 // approvalRequest is what the browser needs to draw a permission card.
@@ -480,8 +483,10 @@ You can look at and drive other windows; the user does not have to open, focus o
   instead of guessing. Prefer waiting on the window over sleeping a fixed time.
 - The whole point is the sequence: launch, wait for the window to appear, capture it, decide, then
   minimize or close it. Do not narrate it as done until the screenshot shows it.
-- Never act on this agent's own window (the dsagent UI or the console running it): closing that
-  ends the run mid-edit. The window tool refuses, and so must you.
+- Never act on this agent's own window. The console that hosts it belongs to the dsagent process,
+  and window_control refuses that by pid. The browser tab showing the UI is a different process,
+  which the tool cannot recognise as yours - and closing it ends the run mid-edit - so leave that
+  window alone too.
 
 # Ways you are likely to break something (hard rules, not preferences)
 1. Killing yourself. Never stop, restart or terminate your own process, or the console hosting it.
@@ -839,7 +844,7 @@ func (a *Agent) stream(ctx context.Context, mode string, emit func(string, strin
 		if err != nil {
 			lastErr = err
 			if attempt < 3 {
-				emit("status", fmt.Sprintf("Ã¢Å¡Â  Network dropped. Retrying (Attempt %d/3)...", attempt+1))
+				emit("status", fmt.Sprintf("\u26A0 Network dropped. Retrying (Attempt %d/3)...", attempt+1))
 				time.Sleep(time.Duration(attempt) * time.Second)
 				continue
 			}
@@ -852,7 +857,7 @@ func (a *Agent) stream(ctx context.Context, mode string, emit func(string, strin
 			resp.Body.Close()
 			lastErr = fmt.Errorf("api %d: %s", resp.StatusCode, strings.TrimSpace(e.String()))
 			if attempt < 3 {
-				emit("status", "Ã¢Å¡Â  Server busy. Retrying...")
+				emit("status", "\u26A0 Server busy. Retrying...")
 				time.Sleep(time.Duration(attempt) * 2 * time.Second)
 				continue
 			}
@@ -1020,16 +1025,21 @@ func (a *Agent) execTool(ctx context.Context, root string, tc ToolCall, mode str
 	// user should see, so web_fetch joins run_shell and write_file in asking
 	// whenever the risk layer flags its target.
 	needsPrompt := needsApproval(tc.Function.Name) ||
-		(tc.Function.Name == "web_fetch" && risk.Level != riskSafe)
-	// Always Allow only ever covers full autonomy, plus a truly dangerous call
-	// never gets it. Restricting it to agent mode is what keeps a screen capture
-	// - or any other side effect - from running unattended in the read-only modes.
-	auto := needsPrompt && autoApprove(a.cfg) && mode == ModeAgent && !dangerous
+		(promptsOnRisk(tc.Function.Name) && risk.Level != riskSafe)
+	// Always Allow covers full autonomy only, and it never covers a call that
+	// cannot be undone by running it again: a dangerous one, or one neverAuto
+	// names. Restricting it to agent mode is what keeps a screen capture - or any
+	// other side effect - from running unattended in the read-only modes.
+	noAuto := neverAuto(tc.Function.Name, tc.Function.Arguments)
+	auto := needsPrompt && autoApprove(a.cfg) && mode == ModeAgent && !dangerous && !noAuto
 	if auto {
 		emit("status", "Always Allow is ON - running "+tc.Function.Name+" without asking.")
 	}
 	if dangerous && mode != ModePlan {
 		emit("status", "Dangerous command detected - Always Allow does not apply, asking you first.")
+	}
+	if noAuto && !dangerous && mode != ModePlan {
+		emit("status", "This call cannot be undone by re-running it - Always Allow does not apply, asking you first.")
 	}
 	if needsPrompt && !auto {
 		req := approvalRequest{ID: tc.ID, Tool: tc.Function.Name, Args: tc.Function.Arguments, Level: risk.Level, Reasons: risk.Reasons}
@@ -1038,7 +1048,7 @@ func (a *Agent) execTool(ctx context.Context, root string, tc ToolCall, mode str
 		}
 		ch := make(chan bool, 1)
 		a.mu.Lock()
-		a.approvals[tc.ID] = &pendingApproval{ch: ch, danger: dangerous}
+		a.approvals[tc.ID] = &pendingApproval{ch: ch, danger: dangerous, noAuto: noAuto}
 		a.mu.Unlock()
 		emit("approval", mustJSON(req))
 
@@ -1125,9 +1135,10 @@ func (a *Agent) setAlwaysAllow(v bool) {
 	}
 	a.mu.Lock()
 	for id, p := range a.approvals {
-		if p.danger {
-			// Dangerous calls stay parked: Always Allow must never become a way
-			// to answer a destructive prompt without reading it.
+		if p.danger || p.noAuto {
+			// Parked, deliberately: Always Allow must never become a way to
+			// answer a destructive prompt - or a close that may discard unsaved
+			// work - without reading it.
 			continue
 		}
 		delete(a.approvals, id)

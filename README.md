@@ -119,12 +119,16 @@ the environment variable and keep nothing on disk.
   anything: `list_windows` enumerates what is on the desktop (title, process,
   state, hwnd), and `screenshot` with `window` set to a title substring or an
   hwnd grabs just that window - including when it is minimized or behind another
-  one. `x`/`y` then offset inside the window, `width`/`height` crop it.
+  one. `x`/`y` then offset inside the window, `width`/`height` crop it. All of
+  this is Win32 through PowerShell, so the three desktop tools are offered on
+  Windows only - elsewhere they would be a step spent on a refusal.
 - **It can drive windows too**: `window_control` focuses, minimizes, maximizes,
   restores or closes one. `close` posts a close request, not a kill - a window
   with unsaved work can refuse, and the result says the window is still open
-  instead of claiming success. It never touches the dsagent window itself: the
-  script refuses by pid, because closing that window is closing the run.
+  instead of claiming success. It never touches the console that hosts dsagent:
+  the script refuses that by pid, because closing it is closing the run. The
+  browser tab showing the UI belongs to another process, which the tool cannot
+  recognise, so that one is on you.
 - **`wait` makes a sequence reliable** rather than a guess: `seconds` (fractions
   allowed, `0.5` is half a second) for "let it load", or `window` with
   `until: appear|gone` to wait for the state you actually need. Launch, wait for
@@ -148,7 +152,10 @@ service. They are also the parts worth reading before you trust it:
 - **Approval gate.** `run_shell`, `write_file` and `window_control` always prompt
   unless you enable auto-approve. `web_fetch` prompts too whenever the URL is flagged - one that
   resolves to this machine or the local network - and `screenshot` always prompts
-  outside Agent mode, because it uploads your desktop. Auto-approve is ignored
+  outside Agent mode, because it uploads your desktop. `list_windows` joins them
+  for the same reason at one remove: the titles it returns are the names of what
+  you have open. `close` is never covered by auto-approve, because no re-run of it
+  brings back unsaved work. Auto-approve is ignored
   entirely in Plan mode and never covers a call classified *dangerous* -
   recursive deletes, disk and registry operations, privilege escalation,
   downloading into a shell, `git push --force`, credential access and similar.

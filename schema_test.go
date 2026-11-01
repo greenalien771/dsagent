@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -66,7 +67,8 @@ func TestToolSchemasAreValidJSONSchema(t *testing.T) {
 
 // The screenshot tool is offered in every mode - looking at the screen is how a
 // read-only session answers "what does this error say?" - and it is never
-// silently auto-approved outside agent mode.
+// silently auto-approved outside agent mode. On a desktop it does not exist on,
+// it is withheld instead: offering a tool that can only refuse costs a step.
 func TestScreenshotToolAvailabilityAndApproval(t *testing.T) {
 	for _, mode := range []string{ModeAgent, ModePlan, ModeAsk} {
 		found := false
@@ -75,8 +77,11 @@ func TestScreenshotToolAvailabilityAndApproval(t *testing.T) {
 				found = true
 			}
 		}
-		if !found {
+		if runtime.GOOS == "windows" && !found {
 			t.Errorf("%s: the screenshot tool is missing", mode)
+		}
+		if runtime.GOOS != "windows" && found {
+			t.Errorf("%s: the screenshot tool is offered on %s, where every call refuses", mode, runtime.GOOS)
 		}
 	}
 	if !needsApproval("screenshot") {

@@ -190,9 +190,13 @@ func classifyTool(name, rawArgs string) Risk {
 
 	case "screenshot":
 		// Not destructive, but it does hand the contents of the user's desktop to
-		// the remote model, so the approval card says exactly that.
+		// the remote model, so the approval card says exactly that - including the
+		// part where the desktop is changed to make the capture possible.
 		if w := strings.TrimSpace(str("window")); w != "" {
-			return Risk{Level: riskElevated, Reasons: []string{"captures the window " + strconv.Quote(w) + " and sends it to the API"}}
+			return Risk{Level: riskElevated, Reasons: []string{
+				"captures the window " + strconv.Quote(w) + " and sends it to the API",
+				"a minimized window is restored to be captured and stays restored; one that will not render itself is brought to the front",
+			}}
 		}
 		return Risk{Level: riskElevated, Reasons: []string{"captures the screen and sends it to the API"}}
 
@@ -206,9 +210,12 @@ func classifyTool(name, rawArgs string) Risk {
 		return Risk{Level: riskElevated, Reasons: []string{"changes the state of the window " + strconv.Quote(str("window")) + " on the user's desktop"}}
 
 	case "list_windows":
-		// Reading titles is not a side effect, but it does list what the user has
-		// open, which is closer to spying than to reading a file.
-		return Risk{Level: riskSafe}
+		// No side effect, but the result is a list of everything the user has
+		// open - document names, URLs, message previews - and it goes to the
+		// remote model. That is the same kind of disclosure as screenshot, which
+		// is on the approval list, so it is classified the same way and asks
+		// through promptsOnRisk below.
+		return Risk{Level: riskElevated, Reasons: []string{"lists every window title on the desktop and sends them to the API"}}
 
 	case "wait":
 		return Risk{Level: riskSafe}
@@ -232,6 +239,28 @@ func classifyTool(name, rawArgs string) Risk {
 		return Risk{Level: riskSafe}
 	}
 	return Risk{Level: riskSafe}
+}
+
+// promptsOnRisk lists the tools that ask whenever the risk layer is unhappy
+// with a particular call, rather than always: a web_fetch to the public internet
+// is fine, one to this machine is not; a window listing is a disclosure of the
+// desktop, so it joins the same gate.
+func promptsOnRisk(name string) bool {
+	return name == "web_fetch" || name == "list_windows"
+}
+
+// neverAuto reports a call that "Always Allow" must not answer even though the
+// risk layer does not call it dangerous. Closing a window can throw away
+// unsaved work, and unlike every other elevated call there is no version of
+// "run it again" that brings the work back.
+func neverAuto(name, rawArgs string) bool {
+	if name != "window_control" {
+		return false
+	}
+	var args map[string]any
+	_ = json.Unmarshal([]byte(rawArgs), &args)
+	act, _ := args["action"].(string)
+	return strings.EqualFold(strings.TrimSpace(act), "close")
 }
 
 // isLocalAddr is isLANHost made address-aware: it also catches IPv6 loopback,

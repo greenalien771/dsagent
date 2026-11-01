@@ -148,9 +148,23 @@ type windowRef struct {
 
 func (w windowRef) empty() bool { return w.Title == "" && w.ID == 0 }
 
-// parseWindowRef reads "window" from a tool call. A value that looks like a
-// handle ("0x1a2b" or "6690") is an id, anything else is a title substring -
-// the shape list_windows prints is what the model is expected to copy back.
+// clampWaitTimeout bounds a window wait, and explains a clamp instead of
+// applying it silently: a caller that asked for two minutes and got one would
+// otherwise read the TIMEOUT as "the window never appeared".
+func clampWaitTimeout(ms int) (int, string) {
+	if ms < waitMinMs {
+		return waitMinMs, ""
+	}
+	if ms > waitMaxMs {
+		return waitMaxMs, fmt.Sprintf("\nNOTE: the wait was capped at %dms, the maximum this tool allows; %dms was asked for.", waitMaxMs, ms)
+	}
+	return ms, ""
+}
+
+// parseWindowRef reads "window" from a tool call. A handle is recognised only
+// in the form list_windows prints it ("0x1a2b"), because a bare number is
+// ambiguous: a window may legitimately be titled "2024", and guessing the handle
+// there would capture whatever else happened to have that id.
 func parseWindowRef(v any) (windowRef, error) {
 	// Absent is the common case: every tool that takes a window also works
 	// without one (whole desktop, next window found, plain sleep).
@@ -170,9 +184,6 @@ func parseWindowRef(v any) (windowRef, error) {
 		if err != nil {
 			return windowRef{}, fmt.Errorf("window %q looks like a handle but is not valid hex", s)
 		}
-		return windowRef{ID: n}, nil
-	}
-	if n, err := strconv.ParseInt(s, 10, 64); err == nil && n > 0 {
 		return windowRef{ID: n}, nil
 	}
 	return windowRef{Title: s}, nil
@@ -255,19 +266,35 @@ func waitTool(ctx context.Context, raw string, poke func()) string {
 		if until != "appear" && until != "gone" {
 			return `BAD ARGS: until must be "appear" or "gone"`
 		}
-		timeout := 10000
+		requested := 10000
 		if ms, ok := num("timeout_ms"); ok {
-			timeout = int(ms)
+			requested = int(ms)
 		}
-		if timeout < waitMinMs {
-			timeout = waitMinMs
-		}
-		if timeout > waitMaxMs {
-			timeout = waitMaxMs
-		}
+		timeout, capped := clampWaitTimeout(requested)
 		// The budget must outlast the wait the caller asked for, or the script
 		// gets killed just before it would have answered.
 		budget := windowArgTimeout + time.Duration(timeout)*time.Millisecond
+		// The wait blocks inside PowerShell, so the activity clock is refreshed
+		// from here. The watchdog measures silence, and a deliberate pause looks
+		// exactly like a wedged run unless something says otherwise: without
+		// this, a wait longer than the idle limit was cancelled with "no activity
+		// for Ns" instead of returning FOUND or TIMEOUT.
+		if poke != nil {
+			stop := make(chan struct{})
+			defer close(stop)
+			go func() {
+				t := time.NewTicker(500 * time.Millisecond)
+				defer t.Stop()
+				for {
+					select {
+					case <-stop:
+						return
+					case <-t.C:
+						poke()
+					}
+				}
+			}()
+		}
 		out, err := runWindowScript(ctx, windowArgs{
 			Action: "wait", Title: ref.Title, ID: ref.ID,
 			Until: until, TimeoutM: timeout, Scale: 1, Budget: budget,
@@ -278,7 +305,7 @@ func waitTool(ctx context.Context, raw string, poke func()) string {
 			}
 			return "ERROR: waiting for the window failed: " + err.Error() + "\n" + out
 		}
-		return out
+		return out + capped
 	}
 
 	// Plain sleep. Fractional seconds are the point ("wait 0.5" is half of the
@@ -290,7 +317,9 @@ func waitTool(ctx context.Context, raw string, poke func()) string {
 	if secs < 0 {
 		return "BAD ARGS: seconds cannot be negative"
 	}
+	capped := ""
 	if secs > waitMaxSeconds {
+		capped = fmt.Sprintf("\nNOTE: the pause was capped at %ds, the maximum this tool allows; %gs was asked for.", waitMaxSeconds, secs)
 		secs = waitMaxSeconds
 	}
 	d := time.Duration(secs * float64(time.Second))
@@ -313,7 +342,7 @@ func waitTool(ctx context.Context, raw string, poke func()) string {
 				poke()
 			}
 		case <-deadline.C:
-			return fmt.Sprintf("Waited %s.", time.Since(start).Round(10*time.Millisecond))
+			return fmt.Sprintf("Waited %s.", time.Since(start).Round(10*time.Millisecond)) + capped
 		}
 	}
 }

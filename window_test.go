@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
 // A window reference is either a title substring or an hwnd. Getting this wrong
-// sends a capture at the wrong window, so the two spellings are pinned here.
+// sends a capture at the wrong window, so the two spellings are pinned here -
+// including the one that is deliberately not a handle: a bare number is a title,
+// because a window may be called "2024" and guessing would hit another window.
 func TestParseWindowRef(t *testing.T) {
 	cases := []struct {
 		in    any
@@ -21,7 +24,7 @@ func TestParseWindowRef(t *testing.T) {
 		{"Untitled - Notepad", "Untitled - Notepad", 0},
 		{"  0x1a2b  ", "", 0x1a2b},
 		{"0X1A2B", "", 0x1a2b},
-		{"6690", "", 6690},
+		{"6690", "6690", 0},
 		{"", "", 0},
 		{nil, "", 0},
 	}
@@ -88,6 +91,76 @@ func TestWindowToolsAvailability(t *testing.T) {
 		return out
 	}
 
+	// Off Windows the desktop tools are not offered at all: every call refuses
+	// before it reaches a window, so a tool in the schema would be a wasted step.
+	if runtime.GOOS != "windows" {
+		for _, mode := range []string{ModeAgent, ModePlan, ModeAsk} {
+			got := names(mode)
+			for _, unwanted := range []string{"list_windows", "window_control", "screenshot"} {
+				if got[unwanted] {
+					t.Errorf("%s: %s is offered on %s, where every call refuses", mode, unwanted, runtime.GOOS)
+				}
+			}
+			// A plain pause needs nothing from the platform, so it survives.
+			if !got["wait"] {
+				t.Errorf("%s: wait is missing, but its seconds mode is portable", mode)
+			}
+		}
+	} else {
+		// Agent can do everything.
+		checkDesktopModes(t, names)
+	}
+	// The runtime gate has to agree with the schema, or a call gets through.
+	if _, denied := modeDenies(ModeAsk, "window_control"); !denied {
+		t.Error("ask mode would have executed window_control")
+	}
+	if _, denied := modeDenies(ModePlan, "window_control"); !denied {
+		t.Error("plan mode would have executed window_control")
+	}
+	if why, denied := modeDenies(ModeAgent, "window_control"); denied {
+		t.Errorf("agent mode refused window_control: %s", why)
+	}
+}
+
+// The platform filter has to drop exactly the desktop tools: too few and the model
+// is offered something that can only refuse, too many and it loses working ones.
+// goos is passed in, so this asserts the non-Windows path on any runner.
+func TestDropDesktopTools(t *testing.T) {
+	tools := []map[string]any{
+		{"function": map[string]any{"name": "list_dir"}},
+		{"function": map[string]any{"name": "wait"}},
+		{"function": map[string]any{"name": "list_windows"}},
+		{"function": map[string]any{"name": "screenshot"}},
+		{"function": map[string]any{"name": "window_control"}},
+	}
+	names := func(in []map[string]any) map[string]bool {
+		out := map[string]bool{}
+		for _, tl := range in {
+			out[tl["function"].(map[string]any)["name"].(string)] = true
+		}
+		return out
+	}
+
+	for _, goos := range []string{"linux", "darwin"} {
+		got := names(dropDesktopTools(tools, goos))
+		for _, unwanted := range []string{"list_windows", "screenshot", "window_control"} {
+			if got[unwanted] {
+				t.Errorf("%s: %s survived the filter", goos, unwanted)
+			}
+		}
+		if !got["list_dir"] || !got["wait"] {
+			t.Errorf("%s: the filter dropped a portable tool: %v", goos, got)
+		}
+	}
+	if got := names(dropDesktopTools(tools, "windows")); len(got) != len(tools) {
+		t.Errorf("windows: %d of %d tools survived", len(got), len(tools))
+	}
+}
+
+// checkDesktopModes is the Windows half of TestWindowToolsAvailability: what
+// each mode is offered on a desktop where the tools can actually run.
+func checkDesktopModes(t *testing.T, names func(string) map[string]bool) {
+	t.Helper()
 	// Agent can do everything.
 	agent := names(ModeAgent)
 	for _, want := range []string{"list_windows", "window_control", "wait", "screenshot"} {
@@ -95,7 +168,6 @@ func TestWindowToolsAvailability(t *testing.T) {
 			t.Errorf("agent: %s is missing", want)
 		}
 	}
-
 	// Plan is read-only: looking and waiting are free, moving a window is not.
 	plan := names(ModePlan)
 	for _, want := range []string{"list_windows", "wait", "screenshot"} {
@@ -106,7 +178,6 @@ func TestWindowToolsAvailability(t *testing.T) {
 	if plan["window_control"] {
 		t.Error("plan mode offers window_control, which changes the desktop")
 	}
-
 	ask := names(ModeAsk)
 	for _, unwanted := range []string{"window_control", "write_file", "run_shell"} {
 		if ask[unwanted] {
@@ -118,17 +189,6 @@ func TestWindowToolsAvailability(t *testing.T) {
 		if !ask[want] {
 			t.Errorf("ask mode is missing %s", want)
 		}
-	}
-
-	// The runtime gate has to agree with the schema, or a call gets through.
-	if _, denied := modeDenies(ModeAsk, "window_control"); !denied {
-		t.Error("ask mode would have executed window_control")
-	}
-	if _, denied := modeDenies(ModePlan, "window_control"); !denied {
-		t.Error("plan mode would have executed window_control")
-	}
-	if why, denied := modeDenies(ModeAgent, "window_control"); denied {
-		t.Errorf("agent mode refused window_control: %s", why)
 	}
 }
 
@@ -146,9 +206,29 @@ func TestWindowControlNeedsApproval(t *testing.T) {
 	if !strings.Contains(joined, "Notepad") || !strings.Contains(strings.ToLower(joined), "unsaved") {
 		t.Fatalf("the card does not name the window or the risk: %v", risk.Reasons)
 	}
-	// Looking and waiting are free.
-	if got := classifyTool("list_windows", `{}`).Level; got != riskSafe {
-		t.Fatalf("list_windows risk = %q, want safe", got)
+	// Listing the desktop ships every window title to the remote model, so it
+	// asks the way a capture does instead of sliding through as "safe".
+	listing := classifyTool("list_windows", `{}`)
+	if listing.Level != riskElevated {
+		t.Fatalf("list_windows risk = %q, want elevated", listing.Level)
+	}
+	if strings.TrimSpace(strings.Join(listing.Reasons, " ")) == "" {
+		t.Fatal("the approval card does not say what a listing sends")
+	}
+	if !promptsOnRisk("list_windows") {
+		t.Fatal("list_windows is classified elevated but never asks for approval")
+	}
+	// A plain pause is free: it touches nothing and sends nothing.
+	if got := classifyTool("wait", `{"seconds":3}`).Level; got != riskSafe {
+		t.Fatalf("wait risk = %q, want safe", got)
+	}
+	// Closing is the one window action that cannot be undone by re-running it,
+	// so Always Allow must not answer it.
+	if !neverAuto("window_control", `{"action":"close","window":"Untitled - Notepad"}`) {
+		t.Error("Always Allow would close a window unattended")
+	}
+	if neverAuto("window_control", `{"action":"minimize","window":"Untitled - Notepad"}`) {
+		t.Error("minimize is recoverable, so Always Allow may cover it")
 	}
 	if got := classifyTool("wait", `{"seconds":3}`).Level; got != riskSafe {
 		t.Fatalf("wait risk = %q, want safe", got)
@@ -260,6 +340,98 @@ func TestListWindowsFindsSomething(t *testing.T) {
 	out = listWindowsTool(context.Background(), `{"title":"zzz-no-such-window-zzz"}`)
 	if !strings.Contains(out, "WINDOWS 0") {
 		t.Fatalf("an impossible filter matched something: %.200s", out)
+	}
+}
+
+// A window wait blocks inside PowerShell, where nothing in Go can see it, so the
+// activity clock has to be refreshed from this side. Without that, a wait longer
+// than the idle limit was cancelled as a stuck run instead of returning.
+func TestWaitForWindowPokesWhileWaiting(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("window enumeration is Windows-only")
+	}
+	var mu sync.Mutex
+	pokes := 0
+	out := waitTool(context.Background(), `{"window":"zzz-no-such-window-zzz","until":"appear","timeout_ms":1600}`, func() {
+		mu.Lock()
+		pokes++
+		mu.Unlock()
+	})
+	mu.Lock()
+	n := pokes
+	mu.Unlock()
+	if !strings.HasPrefix(out, "TIMEOUT") {
+		t.Fatalf("expected a timeout, got %q", out)
+	}
+	if n < 2 {
+		t.Fatalf("the activity clock was refreshed %d time(s) during a 1.6s window wait", n)
+	}
+}
+
+// A clamp has to be stated, not applied silently: a caller that asked for two
+// minutes and got one would read the TIMEOUT as "the window never appeared".
+func TestClampWaitTimeout(t *testing.T) {
+	if ms, note := clampWaitTimeout(5000); ms != 5000 || note != "" {
+		t.Fatalf("5000ms was changed: %d %q", ms, note)
+	}
+	if ms, note := clampWaitTimeout(50); ms != waitMinMs || note != "" {
+		t.Fatalf("a tiny wait was not raised to the floor: %d %q", ms, note)
+	}
+	ms, note := clampWaitTimeout(waitMaxMs + 1)
+	if ms != waitMaxMs {
+		t.Fatalf("an overlong wait was not capped: %d", ms)
+	}
+	if !strings.Contains(note, "capped") {
+		t.Fatalf("the cap was silent: %q", note)
+	}
+}
+
+// "Always Allow" covers the ordinary side effects. It must not cover the one
+// call whose loss cannot be undone by running it again: closing a window that
+// may be holding unsaved work.
+func TestAlwaysAllowDoesNotCoverClosingAWindow(t *testing.T) {
+	a := newTestAgent(t)
+	a.cfg.AutoApprove = true
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tc := ToolCall{ID: "w-close", Type: "function"}
+	tc.Function.Name = "window_control"
+	tc.Function.Arguments = `{"action":"close","window":"Untitled - Notepad"}`
+
+	var mu sync.Mutex
+	var events []string
+	done := make(chan string, 1)
+	go func() {
+		done <- a.execTool(ctx, a.cfg.WorkDir, tc, ModeAgent, func(kind, text string) {
+			mu.Lock()
+			events = append(events, kind)
+			mu.Unlock()
+		})
+	}()
+
+	// Either the call parked for a human or it ran unattended; the second is the
+	// bug. Polling beats a fixed sleep: a loaded machine must not make this flaky.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		mu.Lock()
+		seen := append([]string(nil), events...)
+		mu.Unlock()
+		if contains(seen, "status") && contains(seen, "approval") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the close did not ask for approval; events: %v", seen)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// Answering the parked call is the cleanup: the run is cancelled, which is
+	// what the tool is waiting on.
+	cancel()
+	if out := <-done; !strings.Contains(out, "cancel") {
+		t.Fatalf("a cancelled close reported %q", out)
 	}
 }
 

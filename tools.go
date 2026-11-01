@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -59,7 +60,7 @@ func toolSchemas(mode string) []map[string]any {
 			"until":      map[string]any{"type": "string", "enum": []string{"appear", "gone"}, "description": "condition to wait for, default appear"},
 			"timeout_ms": map[string]any{"type": "integer", "description": "give up after this long, default 10000"}}, nil),
 
-		fn("screenshot", `Capture the screen as an image you can then look at. Pass x/y/width/height to grab only one region: that is how you zoom in on a dialog, an error box or a chart instead of guessing from a full-screen picture. Pass scale (0.1-1) to shrink a big region so it costs fewer tokens. The image appears on the step after this call.`, map[string]any{
+		fn("screenshot", `Capture an image you can then look at: the whole screen, one region, or one window. Pass window (a title substring, or an hwnd from list_windows) to capture just that window, even when it is minimized or behind others - the user does not have to open or focus it; x/y are then offsets inside it. Pass x/y/width/height to grab only one region: that is how you zoom in on a dialog, an error box or a chart instead of guessing from a full-screen picture. Pass scale (0.1-1) to shrink a big region so it costs fewer tokens. The image appears on the step after this call.`, map[string]any{
 			"x":      map[string]any{"type": "integer", "description": "left edge in screen pixels, default 0"},
 			"y":      map[string]any{"type": "integer", "description": "top edge in screen pixels, default 0"},
 			"width":  map[string]any{"type": "integer", "description": "region width in pixels, default the whole desktop"},
@@ -81,7 +82,7 @@ func toolSchemas(mode string) []map[string]any {
 	// write_file follows, and for the same reason.
 	if mode != ModePlan && mode != ModeAsk {
 		tools = append(tools,
-			fn("window_control", `Minimize, maximize, restore, focus or close another window by title or hwnd. Closing is a request (WM_CLOSE), not a kill: a window with unsaved work can refuse and will still be open - check with list_windows and say so rather than claiming it closed. This never touches the agent's own window.`, map[string]any{
+			fn("window_control", `Minimize, maximize, restore, focus or close another window by title or hwnd. Closing is a request (WM_CLOSE), not a kill: a window with unsaved work can refuse and will still be open - check with list_windows and say so rather than claiming it closed. The process hosting this agent is refused by pid; the browser tab showing it is not something this tool can recognise, so leave that one alone.`, map[string]any{
 				"action": map[string]any{"type": "string", "enum": []string{"focus", "minimize", "maximize", "restore", "close"}},
 				"window": map[string]any{"type": "string", "description": "title substring, or an hwnd from list_windows"}}, []string{"action", "window"}))
 	}
@@ -94,7 +95,41 @@ func toolSchemas(mode string) []map[string]any {
 				"command": map[string]any{"type": "string"}}, []string{"command"}))
 	}
 
-	return tools
+	return dropDesktopTools(tools, runtime.GOOS)
+}
+
+// desktopTool reports the tools that need a real Windows desktop: the capture
+// path (capture.ps1, window.ps1), the window enumeration and the window control.
+// wait stays available everywhere, because its plain-sleep half needs nothing
+// from the platform.
+func desktopTool(name string) bool {
+	switch name {
+	case "list_windows", "window_control", "screenshot":
+		return true
+	}
+	return false
+}
+
+// dropDesktopTools removes the tools that cannot run on goos. It takes goos as an
+// argument instead of reading runtime.GOOS so the non-Windows path can be tested
+// from the one platform where the mistake it prevents is invisible.
+//
+// The desktop tools are Win32 through PowerShell. Anywhere else every one of them
+// refuses before it reaches a window, so offering them would cost the model a step
+// to learn what this binary already knows - and a tool that can only be refused is
+// exactly the wasted step toolSchemas exists to avoid.
+func dropDesktopTools(tools []map[string]any, goos string) []map[string]any {
+	if goos == "windows" {
+		return tools
+	}
+	kept := tools[:0]
+	for _, t := range tools {
+		name, _ := t["function"].(map[string]any)["name"].(string)
+		if !desktopTool(name) {
+			kept = append(kept, t)
+		}
+	}
+	return kept
 }
 
 // needsApproval lists the tools a human must see before they run. screenshot is
