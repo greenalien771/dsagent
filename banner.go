@@ -61,6 +61,12 @@ func bannerLines(cfg *Config) []string {
 		key = "from " + prov.KeyEnv + " (never written to disk)"
 	case "store":
 		key = "stored, sealed by the OS keystore"
+	default:
+		if cfg.KeyError != "" {
+			// A key is on disk but could not be loaded. Printing "MISSING" alone
+			// sends the user to look for a setting that is already correct.
+			key = "NOT LOADED - " + cfg.KeyError
+		}
 	}
 
 	approvals := "ask before every write and shell run"

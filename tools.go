@@ -200,53 +200,89 @@ func resolveExisting(p string) string {
 func runTool(ctx context.Context, root string, tc ToolCall, shellLimit time.Duration, poke func()) string {
 	var args map[string]any
 	if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
-		return "BAD ARGS: " + err.Error() + " â€” retry with valid JSON matching the schema"
+		return "BAD ARGS: " + err.Error() + " - retry with valid JSON matching the schema"
 	}
 	str := func(k string) string { s, _ := args[k].(string); return s }
 
 	switch tc.Function.Name {
 	case "list_dir":
-		p, err := safeJoin(root, str("path"))
+		rel := str("path")
+		p, err := safeJoin(root, rel)
 		if err != nil {
-			return err.Error()
+			return "ERROR: " + rel + ": " + err.Error()
 		}
 		var names []string
-		filepath.WalkDir(p, func(path string, d fs.DirEntry, err error) error {
-			if err == nil && path != p {
-				rel, _ := filepath.Rel(root, path)
-				if d.IsDir() {
-					rel += "/"
+		walkErr := filepath.WalkDir(p, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				if path == p {
+					// The folder itself could not be read. Reporting that as an
+					// empty listing is how a permission problem used to look.
+					return err
 				}
-				names = append(names, rel)
+				// One unreadable entry must not hide the rest of the listing, and
+				// must not disappear from it either.
+				r, _ := filepath.Rel(root, path)
+				names = append(names, r+" (could not be read: "+err.Error()+")")
+				return nil
+			}
+			if path != p {
+				r, _ := filepath.Rel(root, path)
+				if d.IsDir() {
+					r += "/"
+				}
+				names = append(names, r)
 			}
 			if len(names) > 500 {
 				return filepath.SkipAll
 			}
 			return nil
 		})
+		if walkErr != nil {
+			return "ERROR: cannot list " + rel + ": " + walkErr.Error()
+		}
 		if len(names) == 0 {
-			return "<empty or file>"
+			// An empty folder and a file are two different answers, and
+			// "<empty or file>" was neither of them.
+			if st, serr := os.Stat(p); serr == nil && !st.IsDir() {
+				return fmt.Sprintf("ERROR: %s is a file, not a folder (%s); read_file is how you read it", rel, humanBytes(st.Size()))
+			}
+			return "<empty folder: " + rel + " has no entries>"
 		}
 		return clip(strings.Join(names, "\n"))
 
 	case "read_file":
-		p, err := safeJoin(root, str("path"))
+		rel := str("path")
+		p, err := safeJoin(root, rel)
 		if err != nil {
-			return err.Error()
+			return "ERROR: " + rel + ": " + err.Error()
+		}
+		if st, serr := os.Stat(p); serr == nil && st.IsDir() {
+			// On Windows a folder reaches ReadFile as "Access is denied", which
+			// reads like a permissions problem instead of the wrong tool.
+			return "ERROR: " + rel + " is a folder, not a file; call list_dir to see what is inside it"
 		}
 		b, err := os.ReadFile(p)
 		if err != nil {
-			return "ERROR: " + err.Error() + " â€” call list_dir to see what exists"
+			if errors.Is(err, fs.ErrNotExist) {
+				return "ERROR: there is no file at " + rel + "; call list_dir to see what exists"
+			}
+			return "ERROR: cannot read " + rel + ": " + err.Error()
 		}
 		off := 0
 		if f, ok := args["offset"].(float64); ok {
 			off = int(f)
 		}
 		if off < 0 {
-			return "ERROR: offset cannot be negative"
+			return fmt.Sprintf("ERROR: offset %d is negative; an offset is a byte position, so 0 means the start of the file", off)
+		}
+		if len(b) == 0 {
+			return "<" + rel + " is empty: 0 bytes>"
+		}
+		if off == len(b) {
+			return fmt.Sprintf("ERROR: offset %d is exactly the end of %s (%d bytes), so there is nothing left to read from there; call read_file again with offset=0 to read it from the start", off, rel, len(b))
 		}
 		if off > len(b) {
-			return "offset past EOF"
+			return fmt.Sprintf("ERROR: offset %d is past the end of %s, which is %d bytes long; call read_file again with offset=0", off, rel, len(b))
 		}
 
 		end := off + maxOut
@@ -258,7 +294,7 @@ func runTool(ctx context.Context, root string, tc ToolCall, shellLimit time.Dura
 		for len(chunk) > 0 && !utf8.Valid(chunk) {
 			chunk = chunk[:len(chunk)-1]
 		}
-		return string(chunk) + fmt.Sprintf("\nâ€¦ TRUNCATED at %d/%d bytes; call read_file with offset=%d", off+len(chunk), len(b), off+len(chunk))
+		return string(chunk) + fmt.Sprintf("\n... TRUNCATED at %d/%d bytes; call read_file with offset=%d", off+len(chunk), len(b), off+len(chunk))
 
 	case "read_image":
 		p, err := safeJoin(root, str("path"))
@@ -339,7 +375,7 @@ func runTool(ctx context.Context, root string, tc ToolCall, shellLimit time.Dura
 			if errors.Is(cmdCtx.Err(), context.DeadlineExceeded) {
 				return s + fmt.Sprintf("\nTIMEOUT: still running after %s, so it was killed. If it needs longer, raise \"Shell command timeout\" in Settings (shell_timeout_sec) and run it again.", shellLimit)
 			}
-			return s + "\nEXIT: " + err.Error()
+			return s + "\n" + exitNote(err)
 		}
 		return s
 
@@ -363,7 +399,7 @@ func runTool(ctx context.Context, root string, tc ToolCall, shellLimit time.Dura
 		raw := strings.TrimSpace(str("url"))
 		u, err := url.Parse(raw)
 		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
-			return "ERROR: web_fetch needs an absolute http:// or https:// URL"
+			return fmt.Sprintf("ERROR: web_fetch needs an absolute http:// or https:// URL, and %q is not one", raw)
 		}
 		// allowLocal mirrors the approval the user saw: it is true only when the
 		// target itself is this machine or the LAN, which is the case the risk
@@ -373,13 +409,27 @@ func runTool(ctx context.Context, root string, tc ToolCall, shellLimit time.Dura
 		req.Header.Set("User-Agent", "Mozilla/5.0")
 		resp, err := webFetchClient(isLocalAddr(u.Hostname())).Do(req)
 		if err != nil {
-			return "ERROR: " + err.Error()
+			return "ERROR: could not fetch " + u.String() + ": " + err.Error() + "\nNothing was retrieved; check the URL and the connection."
 		}
 		defer resp.Body.Close()
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, maxOut))
-		return clip(stripTags(string(b)))
+		text := clip(stripTags(string(b)))
+		// A 404 or a 500 is not the page. Handing the server's error document
+		// back as content is how a caller ends up quoting "Not Found" as the
+		// answer it found on the site.
+		if resp.StatusCode != http.StatusOK {
+			if strings.TrimSpace(text) == "" {
+				text = "(the response body was empty)"
+			}
+			return fmt.Sprintf("ERROR: %s answered HTTP %d %s, so the page was not fetched. What follows is the server's own response, not the page:\n%s",
+				u.Host, resp.StatusCode, http.StatusText(resp.StatusCode), text)
+		}
+		if strings.TrimSpace(text) == "" {
+			return "<" + u.String() + " returned an empty body>"
+		}
+		return text
 	}
-	return "UNKNOWN TOOL " + tc.Function.Name
+	return "ERROR: there is no tool called " + fmt.Sprintf("%q", tc.Function.Name) + "; the tools this mode allows are in the request's tool list - call one of those, or answer from what you already have."
 }
 
 // checkFetchTarget applies the fetch policy to one URL. Safe to call for the
@@ -466,7 +516,7 @@ func scrubbedEnv() []string {
 
 func clip(s string) string {
 	if len(s) > maxOut {
-		return strings.ToValidUTF8(s[:maxOut], "") + "\nâ€¦ TRUNCATED"
+		return strings.ToValidUTF8(s[:maxOut], "") + "\n... TRUNCATED"
 	}
 	return s
 }
@@ -477,4 +527,19 @@ func stripTags(s string) string {
 	s = tagRe.ReplaceAllString(s, " ")
 	s = html.UnescapeString(s)
 	return strings.Join(strings.Fields(s), " ")
+}
+
+// exitNote says what a finished command actually did. "exit status 1" is Go's
+// wording for "a process exited"; it names neither the command nor the code, so
+// the note states the code and points at the output that came with it.
+func exitNote(err error) string {
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		if code := ee.ExitCode(); code >= 0 {
+			return fmt.Sprintf("EXIT: the command exited with code %d; whatever it printed is above.", code)
+		}
+		return "EXIT: the command was killed by a signal, so it has no exit code of its own."
+	}
+	// No exit code at all: the shell itself could not be started.
+	return "EXIT: the command could not be run at all: " + err.Error()
 }

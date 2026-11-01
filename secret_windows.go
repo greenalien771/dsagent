@@ -97,9 +97,12 @@ func openSecret(sealed []byte) (string, error) {
 	return string(out.bytes()), nil
 }
 
+// callError names the call that failed and quotes Windows' own reason. A bare
+// "... failed" leaves the reader unable to tell a wrong user account from a
+// missing DLL from a full disk.
 func callError(name string, err error) error {
 	if err == nil || err == syscall.Errno(0) {
-		return errors.New(name + " failed")
+		return errors.New(name + " failed: Windows returned FALSE and reported no error code")
 	}
 	return errors.New(name + " failed: " + err.Error())
 }

@@ -27,7 +27,7 @@ func sealSecret(plain string) ([]byte, error) {
 func openSecret(sealed []byte) (string, error) {
 	s := string(sealed)
 	if !strings.HasPrefix(s, plainPrefix) {
-		return "", errors.New("unrecognised secret format")
+		return "", errors.New("unrecognised secret format: this file was not written by this build of dsagent")
 	}
 	raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(s, plainPrefix))
 	if err != nil {

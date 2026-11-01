@@ -64,6 +64,13 @@ type Config struct {
 	// KeySource records where the key came from ("env" or "store") so the UI
 	// can explain why edits are ignored. Never contains the key itself.
 	KeySource string `json:"-"`
+
+	// KeyError explains why a key that exists on disk was not loaded: a sealed
+	// file written by another Windows account, a truncated file, a format this
+	// build does not know. It is what the banner and the "no key" refusal quote,
+	// so the user is told the real reason instead of being asked to paste a key
+	// that is already there. Never persisted and never sent to the browser.
+	KeyError string `json:"-"`
 }
 
 // maxStepLimit matches the max="200" the settings form offers.
@@ -208,7 +215,7 @@ func loadConfig() *Config {
 // being sent to z.ai's endpoint under a model name z.ai has never heard of.
 func (c *Config) resolveKeyLocked() {
 	prov := providerFor(c.Provider)
-	c.APIKey, c.KeySource = "", ""
+	c.APIKey, c.KeySource, c.KeyError = "", "", ""
 
 	if k := strings.TrimSpace(os.Getenv(prov.KeyEnv)); k != "" {
 		c.APIKey, c.KeySource = k, "env"
@@ -222,7 +229,10 @@ func (c *Config) resolveKeyLocked() {
 		return
 	}
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		fmt.Fprintf(os.Stderr, "dsagent: the stored %s key could not be decrypted: %v\n", prov.Label, err)
+		// Remembered on the config as well as printed: stderr goes nowhere when
+		// the UI was started from a shortcut, and "MISSING" is not what happened.
+		c.KeyError = err.Error()
+		fmt.Fprintf(os.Stderr, "dsagent: the stored %s key could not be loaded: %v\n", prov.Label, err)
 	}
 }
 
@@ -619,6 +629,15 @@ func (c *Config) shellTimeout() time.Duration {
 
 // credentials returns the model and key together under one lock, so a
 // concurrent /api/config save cannot tear the pair apart mid-request.
+// keyLoadError reports why a stored key that exists could not be loaded, if that
+// is what happened. Read under cfgMu like the key itself, so a Settings save that
+// re-resolves the key cannot tear the answer apart.
+func (c *Config) keyLoadError() string {
+	cfgMu.Lock()
+	defer cfgMu.Unlock()
+	return c.KeyError
+}
+
 func credentials(c *Config) (model, key string) {
 	cfgMu.Lock()
 	defer cfgMu.Unlock()

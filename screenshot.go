@@ -194,10 +194,17 @@ func captureScreenshot(ctx context.Context, raw string) (string, error) {
 	outBytes, err := c.CombinedOutput()
 	text := clip(strings.TrimSpace(string(outBytes)))
 	if err != nil {
-		return "ERROR: screen capture failed: " + err.Error() + "\n" + text, nil
+		// The script writes its own sentence first - "the requested region is
+		// outside the desktop", a locked session, a missing assembly - and err is
+		// only "exit status 1", which says none of that.
+		line := firstLine(text)
+		if line == "" {
+			line = err.Error()
+		}
+		return "ERROR: screen capture failed: " + line + detailLines(text), nil
 	}
 	if st, err := os.Stat(out); err != nil || st.Size() == 0 {
-		return "ERROR: the capture produced no image\n" + text, nil
+		return "ERROR: the capture reported success but wrote no image to " + out + detailLines(text), nil
 	}
 
 	info := text

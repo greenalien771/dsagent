@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -265,7 +267,16 @@ func (a *Agent) handleChat(w http.ResponseWriter, r *http.Request) {
 	// Fail loudly instead of sending a request with an empty bearer token.
 	if _, key := credentials(a.cfg); strings.TrimSpace(key) == "" {
 		prov := a.cfg.activeProvider()
-		emit("error", "No API key configured for "+prov.Label+". Add one in Tools Settings, or set "+prov.KeyEnv+" in the environment, then try again.")
+		// Say which of the two reasons it is: no key at all, or a stored key that
+		// exists but could not be loaded. "No API key configured" while a sealed
+		// file sits on disk is the sentence that sends people looking in the wrong
+		// place - and the reason is already known here.
+		msg := "No API key configured for " + prov.Label + ". Paste one in Settings > Connection, or set " + prov.KeyEnv + " in the environment, then try again."
+		if why := a.cfg.keyLoadError(); why != "" {
+			msg = "The stored " + prov.Label + " key could not be loaded: " + why +
+				"\nPaste a new key in Settings > Connection, or set " + prov.KeyEnv + " in the environment."
+		}
+		emit("error", msg)
 		return
 	}
 	a.run(ctx, req.Task, mode, images, emit)
@@ -832,10 +843,8 @@ func (a *Agent) stream(ctx context.Context, mode string, emit func(string, strin
 	wireMsgs := a.wireMessages()
 
 	model, apiKey := credentials(a.cfg)
-	endpoint := a.cfg.chatEndpoint()
-	if baseURL != "" {
-		endpoint = baseURL
-	}
+	endpoint := a.currentEndpoint()
+	host := hostOf(endpoint)
 
 	body := map[string]any{
 		"model":    model,
@@ -855,20 +864,22 @@ func (a *Agent) stream(ctx context.Context, mode string, emit func(string, strin
 		if err != nil {
 			lastErr = err
 			if attempt < 3 {
-				emit("status", fmt.Sprintf("\u26A0 Network dropped. Retrying (Attempt %d/3)...", attempt+1))
+				// Say what failed, not just that something did. "Network dropped"
+				// was printed above a DNS failure, a refused connection, a TLS
+				// error and a timeout alike, so it left the user with nothing to
+				// act on.
+				emit("status", fmt.Sprintf("Could not reach %s (%v). Retrying, attempt %d of 3...", host, err, attempt+1))
 				time.Sleep(time.Duration(attempt) * time.Second)
 				continue
 			}
-			return Msg{}, fmt.Errorf("network error: %v", err)
+			return Msg{}, fmt.Errorf("could not reach %s after 3 attempts: %v\nCheck the connection, and the endpoint in Settings > Connection if that host is not the one you expect.", host, err)
 		}
 
 		if resp.StatusCode == 429 || resp.StatusCode >= 500 {
-			var e bytes.Buffer
-			io.Copy(&e, resp.Body)
-			resp.Body.Close()
-			lastErr = fmt.Errorf("api %d: %s", resp.StatusCode, strings.TrimSpace(e.String()))
+			lastErr = a.apiError(endpoint, resp.StatusCode, readBody(resp), attempt)
 			if attempt < 3 {
-				emit("status", "\u26A0 Server busy. Retrying...")
+				emit("status", fmt.Sprintf("%s answered HTTP %d %s. Retrying, attempt %d of 3...",
+					host, resp.StatusCode, http.StatusText(resp.StatusCode), attempt+1))
 				time.Sleep(time.Duration(attempt) * 2 * time.Second)
 				continue
 			}
@@ -876,10 +887,7 @@ func (a *Agent) stream(ctx context.Context, mode string, emit func(string, strin
 		}
 
 		if resp.StatusCode != 200 {
-			var e bytes.Buffer
-			io.Copy(&e, resp.Body)
-			resp.Body.Close()
-			return Msg{}, fmt.Errorf("api %d: %s", resp.StatusCode, strings.TrimSpace(e.String()))
+			return Msg{}, a.apiError(endpoint, resp.StatusCode, readBody(resp), 1)
 		}
 
 		msg, err := a.parseStream(resp.Body, emit)
@@ -889,19 +897,168 @@ func (a *Agent) stream(ctx context.Context, mode string, emit func(string, strin
 	return Msg{}, lastErr
 }
 
+// currentEndpoint is the URL the next request goes to: the provider's own
+// endpoint unless Settings stores an override (BaseURL), plus the test hook.
+func (a *Agent) currentEndpoint() string {
+	if baseURL != "" {
+		return baseURL
+	}
+	return a.cfg.chatEndpoint()
+}
+
+// hostOf names the server an endpoint points at, for error text that has to say
+// who answered.
+func hostOf(endpoint string) string {
+	if u, err := url.Parse(endpoint); err == nil && u.Host != "" {
+		return u.Host
+	}
+	return endpoint
+}
+
+// readBody drains a failed response so it can be quoted, with a cap: an error
+// page is worth a sentence, not a megabyte. It closes the body.
+func readBody(resp *http.Response) []byte {
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+	resp.Body.Close()
+	return b
+}
+
+// apiError turns one failed HTTP response into a sentence somebody can act on.
+//
+// What the transcript used to carry was "api 401: {"error":{"message":"...",
+// "type":"authentication_error"}}": a status code and the raw wire body. That
+// says what arrived, not what happened, and nothing at all about what to do. This
+// names the endpoint, says what the status means here, quotes the vendor's own
+// message when there is one, and names the setting to change when there is one.
+func (a *Agent) apiError(endpoint string, status int, body []byte, attempt int) error {
+	host := hostOf(endpoint)
+	prov := a.cfg.activeProvider()
+
+	var head, advice string
+	switch {
+	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+		head = "the API key was refused"
+		advice = "The key for " + prov.Label + " comes from " + prov.KeyEnv + " when that variable is set, otherwise from the stored key. Replace it in Settings > Connection."
+	case status == http.StatusPaymentRequired:
+		head = "the account cannot pay for this request"
+		advice = "Top up the " + prov.Label + " account, then run the task again."
+	case status == http.StatusNotFound:
+		head = "there is no endpoint at that address"
+		advice = "Check the endpoint in Settings > Connection, or clear the base_url override so " + prov.ChatURL + " is used."
+	case status == http.StatusTooManyRequests:
+		head = "the request was rate-limited or is over the account's quota"
+		advice = "Wait a minute and run the task again, or check the plan for " + prov.Label + "."
+	case status >= 500:
+		head = "the provider's server failed on its own side"
+		advice = "Nothing to fix in this agent: " + prov.Label + " returned an error for this request, so try again in a moment."
+	case status == http.StatusBadRequest || status == http.StatusUnprocessableEntity:
+		head = "the request was rejected"
+		advice = "This is usually a model name " + prov.Label + " does not offer, or an image sent to a model that cannot see. Check the model field in Settings > Connection."
+	default:
+		head = "the request failed"
+	}
+
+	msg := fmt.Sprintf("%s answered HTTP %d", host, status)
+	if text := http.StatusText(status); text != "" {
+		msg += " " + text
+	}
+	msg += ": " + head
+	if attempt > 1 {
+		msg += fmt.Sprintf(" (gave up after %d attempts)", attempt)
+	}
+	if detail := apiDetail(body); detail != "" {
+		msg += "\nThe API said: " + detail
+	}
+	if advice != "" {
+		msg += "\n" + advice
+	}
+	return errors.New(msg)
+}
+
+// apiDetail digs the vendor's own sentence out of a failed response. Every
+// endpoint here is OpenAI-compatible, but the error shape still differs:
+// DeepSeek and z.ai nest {"error":{"message":...}}, DashScope repeats
+// {"code":...,"message":...}, and a gateway answers with plain text or HTML.
+func apiDetail(body []byte) string {
+	s := strings.TrimSpace(string(body))
+	if s == "" {
+		return ""
+	}
+	var probe struct {
+		Error   json.RawMessage `json:"error"`
+		Message string          `json:"message"`
+		Msg     string          `json:"msg"`
+	}
+	if json.Unmarshal([]byte(s), &probe) == nil {
+		if len(probe.Error) > 0 {
+			var direct string
+			if json.Unmarshal(probe.Error, &direct) == nil && strings.TrimSpace(direct) != "" {
+				return oneLine(direct)
+			}
+			var nested struct {
+				Message string `json:"message"`
+				Code    string `json:"code"`
+				Type    string `json:"type"`
+			}
+			if json.Unmarshal(probe.Error, &nested) == nil {
+				for _, cand := range []string{nested.Message, nested.Code, nested.Type} {
+					if c := strings.TrimSpace(cand); c != "" {
+						return oneLine(c)
+					}
+				}
+			}
+		}
+		for _, cand := range []string{probe.Message, probe.Msg} {
+			if c := strings.TrimSpace(cand); c != "" {
+				return oneLine(c)
+			}
+		}
+	}
+	// A shape this build does not know - a proxy's page, a gateway's plain text.
+	// Quote the beginning of it rather than hiding what came back.
+	return oneLine(s)
+}
+
+// oneLine flattens a message onto one line and bounds its length, so an HTML
+// error page cannot turn into a paragraph in the transcript.
+func oneLine(s string) string {
+	return clipText(strings.Join(strings.Fields(s), " "), 400)
+}
+
+// clipText bounds a string to n runes, marking that it was cut.
+func clipText(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "..."
+}
+
 func (a *Agent) parseStream(body io.Reader, emit func(string, string)) (Msg, error) {
 	out := Msg{Role: "assistant"}
 	calls := map[int]*ToolCall{}
 	sc := bufio.NewScanner(body)
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
 
+	host := hostOf(a.currentEndpoint())
 	gotDone := false // Track if we actually finished cleanly
+	dataSeen := false
+	// A body that is not an event stream at all - a JSON error, an HTML login
+	// page, a proxy notice - produces no "data: " lines, so it used to be
+	// reported as "closed unexpectedly", which said nothing about what arrived.
+	// The first few plain lines are kept so the failure can quote them.
+	var plain strings.Builder
 
 	for sc.Scan() {
 		line := sc.Text()
 		if len(line) < 6 || line[:6] != "data: " {
+			if plain.Len() < 600 {
+				plain.WriteString(line)
+				plain.WriteString("\n")
+			}
 			continue
 		}
+		dataSeen = true
 		data := line[6:]
 		if data == "[DONE]" {
 			gotDone = true
@@ -926,7 +1083,7 @@ func (a *Agent) parseStream(body io.Reader, emit func(string, string)) (Msg, err
 
 		// Catch errors sent inside the stream
 		if ch.Error != nil {
-			return Msg{}, fmt.Errorf("api stream error: %s", ch.Error.Message)
+			return Msg{}, fmt.Errorf("%s stopped the stream: %s", host, strings.TrimSpace(ch.Error.Message))
 		}
 
 		if len(ch.Choices) == 0 {
@@ -956,12 +1113,22 @@ func (a *Agent) parseStream(body io.Reader, emit func(string, string)) (Msg, err
 	}
 
 	if err := sc.Err(); err != nil {
-		return Msg{}, fmt.Errorf("stream interrupted: %v", err)
+		if out.Content == "" {
+			return Msg{}, fmt.Errorf("the connection to %s broke before it sent a complete reply: %v", host, err)
+		}
+		return Msg{}, fmt.Errorf("the reply from %s broke off after %d characters of text (%v), so the answer is incomplete; type continue to ask for the rest", host, len(out.Content), err)
 	}
 
 	// Catch dropped connections
 	if !gotDone {
-		return Msg{}, fmt.Errorf("stream closed unexpectedly without [DONE]")
+		if !dataSeen {
+			raw := strings.TrimSpace(plain.String())
+			if raw == "" {
+				return Msg{}, fmt.Errorf("%s answered HTTP 200 and then closed the connection without sending anything", host)
+			}
+			return Msg{}, fmt.Errorf("%s answered HTTP 200 but did not send an event stream, so there is no reply to read; what it sent began: %q", host, clipText(raw, 300))
+		}
+		return Msg{}, fmt.Errorf("the reply from %s stopped after %d characters of text without an end-of-stream marker, so it is incomplete; type continue to ask for the rest", host, len(out.Content))
 	}
 
 	if len(calls) > 0 {
@@ -1078,7 +1245,7 @@ func (a *Agent) execTool(ctx context.Context, root string, tc ToolCall, mode str
 			a.mu.Lock()
 			delete(a.approvals, tc.ID)
 			a.mu.Unlock()
-			return "cancelled by user"
+			return "ERROR: not executed - the run was cancelled while this call was waiting for your approval, so it changed nothing. Do not retry it unless the user asks for the task again."
 		}
 		// The card was answered, but the run may have been stopped while it was
 		// on screen: a click that was already in flight must not revive a run the

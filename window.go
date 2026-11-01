@@ -121,23 +121,30 @@ func runWindowScript(ctx context.Context, wa windowArgs) (string, error) {
 		if text == "" {
 			text = err.Error()
 		}
-		return text, fmt.Errorf("%s", firstLine(text))
+		line := firstLine(text)
+		if line == "" {
+			// PowerShell printed nothing that can be quoted, so say what is known
+			// rather than a sentence that only stands for "something went wrong".
+			line = fmt.Sprintf("the %s call failed: powershell exited with %v and printed nothing", wa.Action, err)
+		}
+		return text, errors.New(line)
 	}
 	return text, nil
 }
 
 // firstLine keeps an error message to the sentence that says what went wrong:
-// a PowerShell stack trace buries it.
+// a PowerShell stack trace buries it. It returns "" when the output held no such
+// sentence, so the caller can say what it knows instead of printing a blank.
 func firstLine(s string) string {
 	for _, line := range strings.Split(s, "\n") {
 		line = strings.TrimSpace(strings.TrimRight(line, "\r"))
-		if line == "" || strings.HasPrefix(line, "At line:") || strings.HasPrefix(line, "+") ||
+		if line == "" || strings.HasPrefix(line, "At ") || strings.HasPrefix(line, "+") ||
 			strings.HasPrefix(line, "CategoryInfo") || strings.HasPrefix(line, "FullyQualifiedErrorId") {
 			continue
 		}
 		return line
 	}
-	return "the window call failed"
+	return ""
 }
 
 // windowRef is the window a call is aimed at: a title substring or an hwnd.
@@ -147,6 +154,30 @@ type windowRef struct {
 }
 
 func (w windowRef) empty() bool { return w.Title == "" && w.ID == 0 }
+
+// detailLines returns the part of a script's output that the error sentence does
+// not already quote. Line one is that sentence in every refusal window.ps1
+// writes; repeating it, with PowerShell's stack trace under it, is what made a
+// failed call read like a crash dump instead of an answer.
+func detailLines(out string) string {
+	lines := strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n")
+	var keep []string
+	for i, line := range lines {
+		if i == 0 {
+			continue
+		}
+		t := strings.TrimSpace(line)
+		if t == "" || strings.HasPrefix(t, "At ") || strings.HasPrefix(t, "+") ||
+			strings.HasPrefix(t, "CategoryInfo") || strings.HasPrefix(t, "FullyQualifiedErrorId") {
+			continue
+		}
+		keep = append(keep, t)
+	}
+	if len(keep) == 0 {
+		return ""
+	}
+	return "\n" + strings.Join(keep, "\n")
+}
 
 // clampWaitTimeout bounds a window wait, and explains a clamp instead of
 // applying it silently: a caller that asked for two minutes and got one would
@@ -203,7 +234,7 @@ func listWindowsTool(ctx context.Context, raw string) string {
 	}
 	out, err := runWindowScript(ctx, windowArgs{Action: "list", Title: ref.Title, Scale: 1})
 	if err != nil {
-		return "ERROR: listing windows failed: " + err.Error() + "\n" + out
+		return "ERROR: listing windows failed: " + err.Error() + detailLines(out)
 	}
 	return out + "\nPass any of these to screenshot (window) or window_control (window)."
 }
@@ -230,7 +261,7 @@ func windowControlTool(ctx context.Context, raw string) string {
 	}
 	out, err := runWindowScript(ctx, windowArgs{Action: "act", Title: ref.Title, ID: ref.ID, Act: act, Scale: 1})
 	if err != nil {
-		return "ERROR: " + act + " failed: " + err.Error() + "\n" + out
+		return "ERROR: " + act + " failed: " + err.Error() + detailLines(out)
 	}
 	return out
 }
@@ -303,7 +334,7 @@ func waitTool(ctx context.Context, raw string, poke func()) string {
 			if err.Error() == "cancelled" {
 				return "CANCELLED: the run was stopped while waiting."
 			}
-			return "ERROR: waiting for the window failed: " + err.Error() + "\n" + out
+			return "ERROR: waiting for the window failed: " + err.Error() + detailLines(out)
 		}
 		return out + capped
 	}
@@ -370,7 +401,7 @@ func captureWindow(ctx context.Context, args shotArgs) string {
 		Scale: args.Scale, OffsetX: args.X, OffsetY: args.Y, CropW: args.W, CropH: args.H,
 	})
 	if err != nil {
-		return "ERROR: capturing that window failed: " + err.Error() + "\n" + text
+		return "ERROR: capturing that window failed: " + err.Error() + detailLines(text)
 	}
 	if st, statErr := os.Stat(out); statErr != nil || st.Size() == 0 {
 		return "ERROR: the window capture produced no image\n" + text
