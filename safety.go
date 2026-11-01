@@ -167,6 +167,15 @@ func classifyTool(name, rawArgs string) Risk {
 		return s
 	}
 
+	// An MCP tool runs inside a third-party server process the user configured.
+	// Nothing about the call can be judged from the arguments, so it is always
+	// elevated and the card says which server it is going to.
+	if isMCPToolName(name) {
+		return Risk{Level: riskElevated, Reasons: []string{
+			"runs " + strconv.Quote(name) + " on an MCP server: third-party code, outside this workspace",
+		}}
+	}
+
 	switch name {
 	case "run_shell":
 		return classifyCommand(str("command"))

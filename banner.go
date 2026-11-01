@@ -74,7 +74,7 @@ func bannerLines(cfg *Config) []string {
 		approvals = "auto-approved - dangerous calls still ask"
 	}
 
-	return []string{
+	lines := []string{
 		"dsagent",
 		"local coding agent - one directory, no telemetry",
 		"",
@@ -85,8 +85,20 @@ func bannerLines(cfg *Config) []string {
 		bannerRow("approvals", approvals),
 		bannerRow("limits", fmt.Sprintf("%d steps, %d min, %ds idle, %ds per command",
 			cfg.MaxSteps, cfg.RunTimeoutMin, cfg.IdleTimeoutSec, cfg.ShellTimeoutSec)),
-		bannerRow("config", configPath()),
 	}
+	// Only when there is something to say: a launch with no MCP servers should
+	// not carry an empty row explaining nothing.
+	if len(cfg.MCPServers) > 0 {
+		enabled := 0
+		for _, s := range cfg.MCPServers {
+			if !s.Disabled {
+				enabled++
+			}
+		}
+		lines = append(lines, bannerRow("mcp", fmt.Sprintf("%d server(s), %d enabled - tools start with %s",
+			len(cfg.MCPServers), enabled, mcpToolPrefix)))
+	}
+	return append(lines, bannerRow("config", configPath()))
 }
 
 // printBanner writes the mark with the launch facts beside it, then a blank

@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"runtime"
 	"strconv"
+	"syscall"
 )
 
 //go:embed ui/*
@@ -38,6 +40,7 @@ func main() {
 	mux.HandleFunc("/api/clear", postOnly(ag.handleClear))
 	mux.HandleFunc("/api/config", handleConfig(cfg))
 	mux.HandleFunc("/api/key", handleKey(cfg))
+	mux.HandleFunc("/api/mcp", ag.handleMCP)
 
 	// Bind to loopback only and remember the exact authorities we can legitimately
 	// be reached on. The guard rejects anything else, which is what keeps a
@@ -69,11 +72,27 @@ func main() {
 	// gate is what this process will actually do.
 	printBanner(os.Stdout, url, cfg)
 
+	// Connecting MCP servers is the slowest part of a cold start, so it is done
+	// here rather than on the first task: by the time somebody types one, the
+	// tool catalogue is usually already there. A server that fails to start is
+	// reported by the status endpoint and again at the top of the first run.
+	go ag.warmMCP()
+
 	// -no-browser is for automated checks; a normal launch opens the UI.
 	if !hasArg("-no-browser") {
 		open(url)
 	}
-	select {}
+
+	// Ctrl+C is the only exit this process has, so it is where the MCP servers are
+	// stopped. They are child processes: on their own they notice a closed stdin
+	// and leave, but one that ignores it would linger, and the next launch would
+	// start a second copy of it. A console window closed outright never gets here -
+	// the OS ends the process without delivering a signal - so a closed stdin is
+	// what the servers get in that case, which is why it is closed first.
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	<-sig
+	ag.mcp.close()
 }
 
 func hasArg(want string) bool {

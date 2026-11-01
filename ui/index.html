@@ -758,6 +758,15 @@
        instead of four bars stretched to the column width. */
     .settings-win input[type="number"] { width: 110px; }
     .settings-win .input-mono { font-family: var(--mono); font-size: 11.5px; }
+    /* The MCP server list is one JSON document, so it gets a real text box: the
+       single-line input styling above would hide all but the first line of a
+       pasted server block. */
+    .settings-win textarea {
+      width: 100%; padding: 7px 10px; font-size: 11.5px; line-height: 1.5;
+      border-radius: 6px; background: var(--bg); border: 1px solid var(--border-2);
+      outline: none; resize: vertical; font-family: var(--mono);
+    }
+    .settings-win textarea:focus { border-color: var(--accent); }
 
     .sw-card { border: 1px solid var(--border); border-radius: 8px; padding: 11px 13px; background: var(--bg); max-width: 560px; margin-bottom: 12px; }
     .sw-card h5 { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; color: var(--text-2); margin-bottom: 5px; }
@@ -1319,6 +1328,16 @@
               <button onclick="setShellTimeout(300)">300</button>
               <button onclick="setShellTimeout(600)">600</button>
               <button onclick="setShellTimeout(1800)">1800</button>
+            </div>
+          </div>
+
+          <div class="sw-field">
+            <label class="lbl" for="cfg-mcp">MCP servers (JSON)</label>
+            <textarea id="cfg-mcp" rows="6" spellcheck="false" placeholder='[{"name":"fs","command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","C:\\work"]}]'></textarea>
+            <div class="key-hint">Model Context Protocol servers this agent can call as extra tools. One object per server: <code>name</code> and <code>command</code>, plus optional <code>args</code>, <code>env</code> (<code>"NAME=value"</code>) and <code>dir</code>. Their tools are offered in Agent mode only, and every call asks first unless Always Allow is on. A server starts with the next task, so a typo shows up in the status line instead of as a tool that never worked.</div>
+            <div class="sw-actions">
+              <button type="button" class="btn-sm ghost" onclick="reloadMCP()">Reload servers</button>
+              <span class="pref-hint" id="mcpState" style="margin:0">-</span>
             </div>
           </div>
 
@@ -3750,6 +3769,7 @@ function applyConfig(c) {
   $('#kvApprovals').textContent = c.auto_approve ? 'always allow' : 'ask';
   setAutoBadge(!!c.auto_approve);
   paintWatchdog(c);
+  paintMCP(c);
   renderOnboarding();
 }
 
@@ -3795,6 +3815,7 @@ function openSettings(section) {
     $('#cfg-workdir').value = c.workdir || '';
     $('#cfg-maxsteps').value = c.max_steps || 25;
     paintWatchdog(c);
+    paintMCP(c);
     state.autoAtOpen = !!c.auto_approve;
     paintKeyState(c);
     showCfgError('');
@@ -3860,6 +3881,56 @@ function paintWatchdog(c) {
   if (wdShell) wdShell.textContent = fmtSpan(shellSec);
 }
 
+// The MCP server list is edited as one JSON document, because that is exactly
+// what config.json stores: no invented syntax to get wrong, and a block copied
+// out of the documentation works unchanged.
+function paintMCP(c) {
+  const box = $('#cfg-mcp');
+  if (!box) return;
+  const list = c && Array.isArray(c.mcp_servers) ? c.mcp_servers : [];
+  box.value = list.length ? JSON.stringify(list, null, 2) : '';
+  refreshMCPState();
+}
+
+function refreshMCPState() {
+  const el = $('#mcpState');
+  if (!el) return;
+  fetch('/api/mcp').then((r) => r.json()).then(paintMCPState).catch(() => {
+    el.textContent = 'could not read the server status';
+  });
+}
+
+// paintMCPState is the server's own answer about what it started - not an echo
+// of the box, which may hold unsaved edits.
+function paintMCPState(d) {
+  const el = $('#mcpState');
+  if (!el) return;
+  const servers = (d && d.servers) || [];
+  if (!servers.length) {
+    el.textContent = 'no MCP server is configured';
+    return;
+  }
+  el.textContent = servers.map((s) => {
+    if (s.disabled) return s.name + ': off';
+    if (s.connected) return s.name + ': ' + s.tools + (s.tools === 1 ? ' tool' : ' tools');
+    return s.name + ': not running' + (s.error ? ' - ' + s.error : '');
+  }).join('  Â·  ');
+}
+
+// Reload restarts the servers from what is saved, not from the box: the box may
+// hold unsaved edits, and restarting those would be a Save nobody asked for.
+function reloadMCP() {
+  const el = $('#mcpState');
+  if (el) el.textContent = 'starting servers...';
+  fetch('/api/mcp', { method: 'POST' })
+    .then((r) => r.json())
+    .then((d) => {
+      paintMCPState(d);
+      toast('MCP servers reloaded');
+    })
+    .catch(() => { if (el) el.textContent = 'could not reload the MCP servers'; });
+}
+
 function saveConfig() {
   const key = $('#cfg-key').value.trim();
   const steps = parseInt($('#cfg-maxsteps').value, 10);
@@ -3878,6 +3949,29 @@ function saveConfig() {
   if (!isNaN(idleSec) && idleSec > 0) body.idle_timeout_sec = idleSec;
   if (!isNaN(runMin) && runMin > 0) body.run_timeout_min = runMin;
   if (!isNaN(shellSec) && shellSec > 0) body.shell_timeout_sec = shellSec;
+  const mcpBox = $('#cfg-mcp');
+  if (mcpBox) {
+    const raw = mcpBox.value.trim();
+    // Blank means "no servers": the box is the whole list, so emptying it is how
+    // one is removed. A parse error stops the save instead of posting a partial
+    // list the server would have to guess at.
+    if (!raw) {
+      body.mcp_servers = [];
+    } else {
+      let list;
+      try {
+        list = JSON.parse(raw);
+      } catch (e) {
+        showCfgError('MCP servers: that is not valid JSON - ' + e.message);
+        return;
+      }
+      if (!Array.isArray(list)) {
+        showCfgError('MCP servers: expected a JSON array, one object per server.');
+        return;
+      }
+      body.mcp_servers = list;
+    }
+  }
   // Omitted entirely when blank: an empty field means "keep the current key".
   if (key) body.api_key = key;
 
@@ -4331,7 +4425,7 @@ $('#settingsOverlay').addEventListener('keydown', (e) => {
 });
 // Only the fields that need a Save are tracked: the Interface toggles apply
 // the moment they are clicked and must not claim to be unsaved.
-['#cfg-key', '#cfg-model', '#cfg-workdir', '#cfg-maxsteps', '#cfg-idle', '#cfg-runlimit', '#cfg-shelltimeout'].forEach((sel) => {
+['#cfg-key', '#cfg-model', '#cfg-workdir', '#cfg-maxsteps', '#cfg-idle', '#cfg-runlimit', '#cfg-shelltimeout', '#cfg-mcp'].forEach((sel) => {
   const node = $(sel);
   if (!node) return;
   node.addEventListener('input', () => markSettingsDirty(true));

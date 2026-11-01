@@ -107,10 +107,16 @@ type Agent struct {
 	// calls counts identical tool calls inside one run, so a model looping on
 	// the same failing command is stopped instead of allowed to spin.
 	calls map[string]int
+
+	// mcp owns the Model Context Protocol servers the user configured and the
+	// catalogue of tools they advertise (mcp.go). It lives as long as the agent,
+	// because a server process is expensive to start and expensive to lose
+	// halfway through a session.
+	mcp *mcpManager
 }
 
 func NewAgent(c *Config) *Agent {
-	return &Agent{cfg: c, approvals: map[string]*pendingApproval{}, mode: ModeAgent, calls: map[string]int{}}
+	return &Agent{cfg: c, approvals: map[string]*pendingApproval{}, mode: ModeAgent, calls: map[string]int{}, mcp: newMCPManager()}
 }
 
 // ---- run bookkeeping ---------------------------------------------------
@@ -282,6 +288,19 @@ func (a *Agent) handleChat(w http.ResponseWriter, r *http.Request) {
 	a.run(ctx, req.Task, mode, images, emit)
 }
 
+// warmMCP starts the configured MCP servers at launch, so the first task does
+// not pay for it. It is the same ensure() a run calls: whichever arrives second
+// finds the catalogue already built and does nothing.
+func (a *Agent) warmMCP() {
+	servers := a.cfg.mcpServers()
+	if len(servers) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	a.mcp.ensure(ctx, servers)
+}
+
 func (a *Agent) handleStop(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	token := a.runToken
@@ -359,6 +378,38 @@ func (a *Agent) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"run_limit_ms":  int64(hardLimit / time.Millisecond),
 		"step_limit":    steps,
 	})
+}
+
+// handleMCP reports the configured MCP servers, and POST starts them again.
+//
+// The status is what the settings pane shows next to the list: which entries are
+// running, how many tools each advertises, and the sentence that says why one is
+// not. POST is the "Reload servers" button - it is how a config.json edit, or a
+// server that died, is picked up without restarting the agent.
+func (a *Agent) handleMCP(w http.ResponseWriter, r *http.Request) {
+	servers := a.cfg.mcpServers()
+
+	switch r.Method {
+	case http.MethodGet, http.MethodHead:
+		writeJSON(w, http.StatusOK, a.mcpReport(servers))
+	case http.MethodPost:
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		a.mcp.refresh(ctx, servers, true)
+		writeJSON(w, http.StatusOK, a.mcpReport(servers))
+	default:
+		w.Header().Set("Allow", "GET, POST")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// mcpReport is the payload both methods answer with.
+func (a *Agent) mcpReport(servers []MCPServerConfig) map[string]any {
+	return map[string]any{
+		"servers":    a.mcp.status(),
+		"tools":      a.mcp.toolCount(),
+		"configured": len(servers),
+	}
 }
 
 // handleClear starts a fresh server-side conversation. The repeat-call ledger
@@ -727,6 +778,26 @@ func (a *Agent) run(ctx context.Context, task, mode string, images []imagePart, 
 		emit("status", "Mode: "+modeTitle(mode))
 	}
 
+	// MCP servers are started here, once per configuration, before the request
+	// that can name their tools: the model is only offered a tool that can
+	// actually answer it. A server that fails to start is reported and skipped -
+	// one broken entry must not cost the run the other servers, let alone the
+	// built-in tools.
+	if servers := a.cfg.mcpServers(); len(servers) > 0 {
+		fresh := a.mcp.stale(servers)
+		if fresh {
+			emit("status", "Starting MCP servers: "+mcpServerNames(servers)+"...")
+		}
+		a.mcp.ensure(ctx, servers)
+		if fresh {
+			for _, s := range a.mcp.status() {
+				if s.Error != "" {
+					emit("status", "MCP server "+s.Name+" is not available: "+s.Error)
+				}
+			}
+		}
+	}
+
 	for step := 0; step < maxSteps; step++ {
 		if ctx.Err() != nil {
 			a.emitStop(ctx, emit)
@@ -839,6 +910,22 @@ func (a *Agent) wireMessages() []map[string]any {
 	return wireMsgs
 }
 
+// toolList is the tool set one request offers: the built-in tools this mode
+// allows, plus whatever the configured MCP servers advertise.
+//
+// MCP tools are offered in Agent mode only. They run third-party code whose
+// effects this agent cannot know, so a read-only session cannot promise it
+// changed nothing while they are on the list - the same reason write_file and
+// window_control are not offered there either. A tool that can only be refused
+// costs a step, and the refusal below says so in words if the model asks anyway.
+func (a *Agent) toolList(mode string) []map[string]any {
+	tools := toolSchemas(mode)
+	if mode != ModeAgent {
+		return tools
+	}
+	return append(tools, a.mcp.schemas()...)
+}
+
 func (a *Agent) stream(ctx context.Context, mode string, emit func(string, string)) (Msg, error) {
 	wireMsgs := a.wireMessages()
 
@@ -849,7 +936,7 @@ func (a *Agent) stream(ctx context.Context, mode string, emit func(string, strin
 	body := map[string]any{
 		"model":    model,
 		"messages": wireMsgs,
-		"tools":    toolSchemas(mode),
+		"tools":    a.toolList(mode),
 		"stream":   true,
 	}
 	b, _ := json.Marshal(body)
@@ -1264,6 +1351,17 @@ func (a *Agent) execTool(ctx context.Context, root string, tc ToolCall, mode str
 	// A tool that blocks on purpose (wait) refreshes the activity clock through
 	// this: the watchdog measures silence, and a deliberate pause is not silence
 	// from a wedged run, but nothing else distinguishes the two.
+	// An MCP tool is answered by the server that advertised it. It got here
+	// through the same cancellation check, repeat ledger and approval card as
+	// every built-in tool, so a refused or cancelled call never reaches a server.
+	if isMCPToolName(tc.Function.Name) {
+		out, err := a.mcp.callTool(ctx, tc.Function.Name, tc.Function.Arguments, a.touch)
+		if err != nil {
+			return "ERROR: " + redact(err.Error())
+		}
+		return redact(out)
+	}
+
 	return redact(runTool(ctx, root, tc, limit, a.touch))
 }
 
@@ -1339,6 +1437,16 @@ func modeTitle(mode string) string {
 
 // modeDenies is the runtime counterpart of the filtered tool schema.
 func modeDenies(mode, tool string) (string, bool) {
+	// An MCP tool runs third-party code this agent cannot vouch for, so it is
+	// withheld from both read-only postures. The refusal names the posture and
+	// the way out instead of leaving the model to try again.
+	if isMCPToolName(tool) && mode != ModeAgent {
+		if mode == ModePlan {
+			return "DENIED by plan mode: this session is read-only, and an MCP tool may change anything. Name the tool and the arguments you would pass in your plan instead; the user switches to Agent mode to run it.", true
+		}
+		return "DENIED by ask mode: this session only answers questions. State which MCP tool you would call and why, then stop.", true
+	}
+
 	switch mode {
 	case ModePlan:
 		if tool == "write_file" {

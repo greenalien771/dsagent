@@ -42,6 +42,12 @@ type Config struct {
 	// it as an advanced field.
 	BaseURL string `json:"base_url,omitempty"`
 
+	// MCPServers are Model Context Protocol servers this agent may use as extra
+	// tool providers (mcp.go). Each entry is a child process the user configured;
+	// a server is started only because it is listed here, and this agent never
+	// connects to one over the network on its own.
+	MCPServers []MCPServerConfig `json:"mcp_servers,omitempty"`
+
 	// AutoApprove skips the per-tool approval prompt (run_shell, write_file).
 	// Dangerous: the agent then runs unattended. Set from Safety in Settings.
 	AutoApprove bool `json:"auto_approve"`
@@ -202,6 +208,16 @@ func loadConfig() *Config {
 		c.WorkDir, _ = os.Getwd()
 	}
 
+	// A hand-edited mcp_servers list is validated like one that came from the
+	// settings form. An entry that cannot work is dropped with a note on stderr
+	// instead of being started on every task and failing there.
+	if cleaned, problems := normalizeMCPServers(c.MCPServers); len(problems) > 0 || len(cleaned) != len(c.MCPServers) {
+		c.MCPServers = cleaned
+		for _, p := range problems {
+			fmt.Fprintf(os.Stderr, "dsagent: %s\n", p)
+		}
+	}
+
 	// Environment wins: nothing has to be written to disk at all.
 	c.resolveKeyLocked()
 	return c
@@ -351,10 +367,14 @@ type configView struct {
 	IdleTimeoutSec  int        `json:"idle_timeout_sec"`
 	RunTimeoutMin   int        `json:"run_timeout_min"`
 	ShellTimeoutSec int        `json:"shell_timeout_sec"`
-	APIKeySet       bool       `json:"api_key_set"`
-	APIKeyHint      string     `json:"api_key_hint,omitempty"`
-	APIKeySource    string     `json:"api_key_source,omitempty"`
-	APIKeyEditable  bool       `json:"api_key_editable"`
+	// MCPServers is the configured server list, verbatim: it is the user's own
+	// file, and unlike the API key it is meant to be edited from the settings
+	// pane. Any token an entry carries in env is the user's, not this agent's.
+	MCPServers     []MCPServerConfig `json:"mcp_servers"`
+	APIKeySet      bool              `json:"api_key_set"`
+	APIKeyHint     string            `json:"api_key_hint,omitempty"`
+	APIKeySource   string            `json:"api_key_source,omitempty"`
+	APIKeyEditable bool              `json:"api_key_editable"`
 }
 
 func viewOf(c *Config) configView {
@@ -376,6 +396,7 @@ func viewOf(c *Config) configView {
 		IdleTimeoutSec:  c.IdleTimeoutSec,
 		RunTimeoutMin:   c.RunTimeoutMin,
 		ShellTimeoutSec: c.ShellTimeoutSec,
+		MCPServers:      append([]MCPServerConfig(nil), c.MCPServers...),
 		APIKeySet:       c.APIKey != "",
 		APIKeyHint:      hintOf(c.APIKey),
 		APIKeySource:    c.KeySource,
@@ -408,11 +429,15 @@ type configPatch struct {
 	BaseURL  *string `json:"base_url"`
 	// Watchdog timers. Out-of-range values are refused rather than clamped:
 	// a silently rewritten timeout is worse than one that did not save.
-	IdleTimeoutSec  *int    `json:"idle_timeout_sec"`
-	RunTimeoutMin   *int    `json:"run_timeout_min"`
-	ShellTimeoutSec *int    `json:"shell_timeout_sec"`
-	APIKey          *string `json:"api_key"`
-	ClearAPIKey     *bool   `json:"clear_api_key"`
+	IdleTimeoutSec  *int `json:"idle_timeout_sec"`
+	RunTimeoutMin   *int `json:"run_timeout_min"`
+	ShellTimeoutSec *int `json:"shell_timeout_sec"`
+	// MCPServers replaces the whole list: the settings pane edits it as one
+	// document, and merging entries by name would make a rename look like a
+	// different server.
+	MCPServers  *[]MCPServerConfig `json:"mcp_servers"`
+	APIKey      *string            `json:"api_key"`
+	ClearAPIKey *bool              `json:"clear_api_key"`
 }
 
 // applyPatch mutates the config and persists it.
@@ -538,6 +563,17 @@ func applyPatch(c *Config, p configPatch) error {
 		}
 	}
 
+	if p.MCPServers != nil {
+		cleaned, problems := normalizeMCPServers(*p.MCPServers)
+		if len(problems) > 0 {
+			// Refused rather than partly applied: a list that lost an entry
+			// silently is worse than one that did not save.
+			errs = append(errs, problems...)
+		} else {
+			c.MCPServers = cleaned
+		}
+	}
+
 	if err := saveConfig(c); err != nil {
 		errs = append(errs, "could not save config: "+err.Error())
 	}
@@ -625,6 +661,15 @@ func (c *Config) shellTimeout() time.Duration {
 		secs = defaultShellTimeoutSec
 	}
 	return time.Duration(clampInt(secs, minShellTimeoutSec, maxShellTimeoutSec)) * time.Second
+}
+
+// mcpServers returns the configured MCP server list. It is a copy, taken under
+// cfgMu, so a Save that lands while the servers are being started cannot tear
+// the list apart mid-refresh.
+func (c *Config) mcpServers() []MCPServerConfig {
+	cfgMu.Lock()
+	defer cfgMu.Unlock()
+	return append([]MCPServerConfig(nil), c.MCPServers...)
 }
 
 // credentials returns the model and key together under one lock, so a

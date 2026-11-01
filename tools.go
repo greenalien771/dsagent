@@ -141,7 +141,11 @@ func dropDesktopTools(tools []map[string]any, goos string) []map[string]any {
 // on it for a privacy reason rather than a destructive one: it ships the
 // contents of the user's screen to the remote API.
 func needsApproval(name string) bool {
-	return name == "run_shell" || name == "write_file" || name == "screenshot" || name == "window_control"
+	// An MCP tool belongs to a third-party server the user configured. This agent
+	// cannot classify what it does with its arguments, so every call is shown
+	// before it runs - the same rule run_shell follows, for the same reason.
+	return name == "run_shell" || name == "write_file" || name == "screenshot" || name == "window_control" ||
+		isMCPToolName(name)
 }
 
 // safeJoin resolves rel against root and refuses anything that lands outside it.
