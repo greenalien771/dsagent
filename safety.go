@@ -191,7 +191,27 @@ func classifyTool(name, rawArgs string) Risk {
 	case "screenshot":
 		// Not destructive, but it does hand the contents of the user's desktop to
 		// the remote model, so the approval card says exactly that.
+		if w := strings.TrimSpace(str("window")); w != "" {
+			return Risk{Level: riskElevated, Reasons: []string{"captures the window " + strconv.Quote(w) + " and sends it to the API"}}
+		}
 		return Risk{Level: riskElevated, Reasons: []string{"captures the screen and sends it to the API"}}
+
+	case "window_control":
+		// Recoverable, but it changes what is on the user's desktop while they
+		// may be using it - and closing a window can lose unsaved work.
+		act := strings.ToLower(strings.TrimSpace(str("action")))
+		if act == "close" {
+			return Risk{Level: riskElevated, Reasons: []string{"closes the window " + strconv.Quote(str("window")) + ", which can discard unsaved work"}}
+		}
+		return Risk{Level: riskElevated, Reasons: []string{"changes the state of the window " + strconv.Quote(str("window")) + " on the user's desktop"}}
+
+	case "list_windows":
+		// Reading titles is not a side effect, but it does list what the user has
+		// open, which is closer to spying than to reading a file.
+		return Risk{Level: riskSafe}
+
+	case "wait":
+		return Risk{Level: riskSafe}
 
 	case "web_fetch":
 		u := strings.TrimSpace(str("url"))

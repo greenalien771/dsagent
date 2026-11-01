@@ -119,27 +119,9 @@ func base64Payload(s string) (string, error) {
 	return payload, nil
 }
 
-// supportsVision reports whether a model name accepts image input.
-//
-// Taken from the Models & Pricing page: deepseek-flash (DeepSeek-V4.1-Flash-1017)
-// has Vision, deepseek-v4-pro (DeepSeek-V4-Pro-0813) does not. The retired names
-// deepseek-v4-flash and deepseek-v4-flash-vision-exp are still served by the
-// Flash model, so they inherit its support.
-//
-// It is a deny-list of the text-only families rather than an allow-list of the
-// known vision ones: an unfamiliar or newer Flash revision should be tried and,
-// if it really cannot see, answered by the API's own error - not refused here
-// because this list was out of date.
-func supportsVision(model string) bool {
-	m := strings.ToLower(strings.TrimSpace(model))
-	if m == "" {
-		return false
-	}
-	if strings.Contains(m, "v4-pro") || strings.Contains(m, "reasoner") {
-		return false
-	}
-	return true
-}
+// Vision depends on the vendor as well as the model, so the table lives with the
+// provider registry (providers.go, modelSeesImages) and every checklist here
+// asks it. Nothing in this file decides which model can see.
 
 // imageNote names the images riding on a user turn, so the model can refer to a
 // screenshot by name instead of describing "the image".
@@ -236,10 +218,11 @@ func imagePartFromFile(path string) (imagePart, error) {
 // step, which is also why the tool description promises the image one step
 // later rather than immediately.
 func (a *Agent) attachShot(path string, emit func(string, string)) {
+	prov := a.cfg.activeProvider()
 	model, _ := credentials(a.cfg)
 
 	part, err := imagePartFromFile(path)
-	if err == nil && !supportsVision(model) {
+	if err == nil && !modelSeesImages(prov.ID, model) {
 		err = fmt.Errorf("the model %s does not accept images", model)
 	}
 	if err != nil {

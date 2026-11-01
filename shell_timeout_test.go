@@ -61,7 +61,7 @@ func TestShellTimeoutIsHonouredPerCommand(t *testing.T) {
 
 	// 2s: short enough to keep the test quick, long enough to start a shell.
 	start := time.Now()
-	out := runTool(context.Background(), root, shellCall(slowCommand()), 2*time.Second)
+	out := runTool(context.Background(), root, shellCall(slowCommand()), 2*time.Second, nil)
 	elapsed := time.Since(start)
 
 	if !strings.Contains(out, "TIMEOUT") {
@@ -79,7 +79,7 @@ func TestShellTimeoutIsHonouredPerCommand(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		quick = "sleep 1"
 	}
-	out = runTool(context.Background(), root, shellCall(quick), 30*time.Second)
+	out = runTool(context.Background(), root, shellCall(quick), 30*time.Second, nil)
 	if strings.Contains(out, "TIMEOUT") {
 		t.Fatalf("a command inside its limit was killed: %q", out)
 	}
@@ -96,7 +96,7 @@ func TestCancelBeatsTheShellTimeout(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	out := runTool(ctx, os.TempDir(), shellCall(slowCommand()), 10*time.Minute)
+	out := runTool(ctx, os.TempDir(), shellCall(slowCommand()), 10*time.Minute, nil)
 	if elapsed := time.Since(start); elapsed > 6*time.Second {
 		t.Fatalf("the parent context did not bound the command: %v", elapsed)
 	}

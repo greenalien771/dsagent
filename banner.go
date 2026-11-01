@@ -54,10 +54,11 @@ func bannerRow(label, value string) string {
 // gate that is already off - those are the things worth knowing before you type
 // a task, and the ones that are invisible from the UI until it is too late.
 func bannerLines(cfg *Config) []string {
-	key := "MISSING - paste one in Settings, or set " + keyEnvVar
+	prov := providerFor(cfg.Provider)
+	key := "MISSING - paste one in Settings, or set " + prov.KeyEnv
 	switch cfg.KeySource {
 	case "env":
-		key = "from " + keyEnvVar + " (never written to disk)"
+		key = "from " + prov.KeyEnv + " (never written to disk)"
 	case "store":
 		key = "stored, sealed by the OS keystore"
 	}
@@ -72,6 +73,7 @@ func bannerLines(cfg *Config) []string {
 		"local coding agent - one directory, no telemetry",
 		"",
 		bannerRow("model", cfg.Model),
+		bannerRow("provider", prov.Label),
 		bannerRow("workdir", cfg.WorkDir),
 		bannerRow("key", key),
 		bannerRow("approvals", approvals),

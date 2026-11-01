@@ -121,18 +121,43 @@ func TestNormalizeImagesEnforcesLimits(t *testing.T) {
 	}
 }
 
-func TestSupportsVisionFollowsTheModelTable(t *testing.T) {
-	cases := map[string]bool{
-		"deepseek-flash":               true,
-		"deepseek-v4-flash-vision-exp": true, // retired name, served by Flash
-		"DeepSeek-Flash":               true,
-		"deepseek-v4-pro":              false,
-		"deepseek-reasoner":            false,
-		"":                             false,
+func TestModelSeesImagesFollowsTheProviderTable(t *testing.T) {
+	cases := []struct {
+		prov  providerID
+		model string
+		want  bool
+	}{
+		// DeepSeek: a deny-list, so an unfamiliar Flash revision is still tried.
+		{providerDeepSeek, "deepseek-flash", true},
+		{providerDeepSeek, "deepseek-v4-flash-vision-exp", true}, // retired name, served by Flash
+		{providerDeepSeek, "DeepSeek-Flash", true},
+		{providerDeepSeek, "deepseek-v4-pro", false},
+		{providerDeepSeek, "deepseek-reasoner", false},
+		{providerDeepSeek, "", false},
+
+		// Qwen: only the VL/omni models see.
+		{providerQwen, "qwen-vl-max", true},
+		{providerQwen, "qwen3-vl-plus", true},
+		{providerQwen, "qwen-omni-turbo", true},
+		{providerQwen, "qwen-plus", false},
+		{providerQwen, "qwen3-coder-plus", false},
+
+		// z.ai: GLM-5.3-Flash is multimodal and the -v models see; the plain
+		// text models, including 4.5/4.7-Flash, do not.
+		{providerZAI, "glm-5.3-flash", true},
+		{providerZAI, "glm-5.3-flashx", true},
+		{providerZAI, "glm-4.6v", true},
+		{providerZAI, "glm-4.6v-flash", true},
+		{providerZAI, "glm-5.3", false},
+		{providerZAI, "glm-4.7-flash", false},
+		{providerZAICoding, "glm-5.3", false},
+
+		// An endpoint this build knows nothing about never gets a picture.
+		{providerID("someone-else"), "anything", false},
 	}
-	for model, want := range cases {
-		if got := supportsVision(model); got != want {
-			t.Errorf("supportsVision(%q) = %v, want %v", model, got, want)
+	for _, tc := range cases {
+		if got := modelSeesImages(tc.prov, tc.model); got != tc.want {
+			t.Errorf("modelSeesImages(%q, %q) = %v, want %v", tc.prov, tc.model, got, tc.want)
 		}
 	}
 }
@@ -335,8 +360,14 @@ func TestHandleChatRefusesImagesForTextOnlyModel(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status %d, want 400: %s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "deepseek-flash") {
-		t.Fatalf("the error does not say what to switch to: %s", w.Body.String())
+	// It has to name the provider it refused for and point at the setting that
+	// fixes it: a bare "does not accept images" leaves the user guessing which
+	// vendor's model list to look at.
+	msg := w.Body.String()
+	if !strings.Contains(msg, "does not accept images") ||
+		!strings.Contains(msg, providerFor(string(providerDeepSeek)).Label) ||
+		!strings.Contains(msg, "Settings > Agent") {
+		t.Fatalf("the error does not name the provider and where to switch: %s", msg)
 	}
 	a.mu.Lock()
 	busy := a.isRunning

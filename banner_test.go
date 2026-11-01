@@ -88,7 +88,7 @@ func TestBannerReportsTheLaunchState(t *testing.T) {
 		{
 			name:  "no key yet",
 			setup: func(c *Config) {},
-			want:  []string{"key       MISSING", keyEnvVar},
+			want:  []string{"key       MISSING", providerFor(string(providerDeepSeek)).KeyEnv},
 		},
 		{
 			name:  "key from the environment",

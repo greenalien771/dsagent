@@ -80,6 +80,12 @@ Write-Output ("DESKTOP " + $vs.X + "," + $vs.Y + " " + $vs.Width + "x" + $vs.Hei
 type shotArgs struct {
 	X, Y, W, H int
 	Scale      float64
+
+	// Window names the single window to capture instead of the desktop: either
+	// a title substring or an hwnd from list_windows. When it is set, X and Y
+	// are offsets inside that window rather than screen coordinates.
+	Window   string
+	WindowID int64
 }
 
 // parseShotArgs reads the region and zoom out of a tool call. Absent values mean
@@ -136,6 +142,14 @@ func parseShotArgs(raw string) (shotArgs, error) {
 	if a.Scale > shotMaxScale {
 		a.Scale = shotMaxScale
 	}
+	// A named window is parsed here so an ambiguous handle is refused before
+	// anything is captured or sent anywhere.
+	ref, err := parseWindowRef(args["window"])
+	if err != nil {
+		return a, err
+	}
+	a.Window = ref.Title
+	a.WindowID = ref.ID
 	a.X, a.Y, a.W, a.H = x, y, w, h
 	return a, nil
 }
@@ -149,6 +163,11 @@ func captureScreenshot(ctx context.Context, raw string) (string, error) {
 	args, err := parseShotArgs(raw)
 	if err != nil {
 		return "ERROR: " + err.Error(), nil
+	}
+	// A named window is a different backend (window.ps1) but the same result
+	// shape: one PNG and a SHOT line, so the model sees it the same way.
+	if args.Window != "" || args.WindowID != 0 {
+		return captureWindow(ctx, args), nil
 	}
 	dir := filepath.Join(os.TempDir(), "dsagent-shots")
 	if err := os.MkdirAll(dir, 0700); err != nil {

@@ -22,7 +22,7 @@ func withTempConfig(t *testing.T) {
 	// next one - which is exactly what the "a fresh load must recover it" and
 	// "no key file was stored" assertions assume is not the case.
 	t.Setenv("HOME", dir)
-	t.Setenv(keyEnvVar, "")
+	t.Setenv(providerFor(string(providerDeepSeek)).KeyEnv, "")
 	// Create the directory the code will actually use, not a guess at it: the
 	// config path is APPDATA\\dsagent on Windows, XDG_CONFIG_HOME/dsagent on
 	// Linux and $HOME/Library/Application Support/dsagent on macOS. Hardcoding
@@ -54,7 +54,7 @@ func TestConfigFileNeverContainsTheKey(t *testing.T) {
 	}
 
 	// The sealed blob must not contain the key either.
-	blob, err := os.ReadFile(secretPath())
+	blob, err := os.ReadFile(secretPath(keyIDDeepSeek))
 	if err != nil {
 		t.Fatalf("read sealed key: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestBlankKeyKeepsExistingKey(t *testing.T) {
 	if c.APIKey != "" {
 		t.Fatal("clear_api_key did not remove the key")
 	}
-	if _, err := os.Stat(secretPath()); !os.IsNotExist(err) {
+	if _, err := os.Stat(secretPath(keyIDDeepSeek)); !os.IsNotExist(err) {
 		t.Fatal("sealed key file still on disk after removal")
 	}
 }
@@ -195,7 +195,7 @@ func TestBlankKeyKeepsExistingKey(t *testing.T) {
 func TestEnvKeyWinsAndIsReadOnly(t *testing.T) {
 	withTempConfig(t)
 	const envKey = "sk-envenvenvenvenvenvenvenvenvenv1234"
-	t.Setenv(keyEnvVar, envKey)
+	t.Setenv(providerFor(string(providerDeepSeek)).KeyEnv, envKey)
 
 	c := loadConfig()
 	if c.APIKey != envKey || c.KeySource != "env" {
@@ -212,7 +212,7 @@ func TestEnvKeyWinsAndIsReadOnly(t *testing.T) {
 	if c.APIKey != envKey {
 		t.Fatal("env key was replaced by a stored one")
 	}
-	if _, err := os.Stat(secretPath()); !os.IsNotExist(err) {
+	if _, err := os.Stat(secretPath(keyIDDeepSeek)); !os.IsNotExist(err) {
 		t.Fatal("stored a key file even though the env var is set")
 	}
 }
@@ -234,7 +234,7 @@ func TestLegacyPlaintextKeyIsMigrated(t *testing.T) {
 	if strings.Contains(string(raw), secret) {
 		t.Fatalf("legacy plaintext key survived migration:\n%s", raw)
 	}
-	if _, err := os.Stat(secretPath()); err != nil {
+	if _, err := os.Stat(secretPath(keyIDDeepSeek)); err != nil {
 		t.Fatalf("sealed key not written during migration: %v", err)
 	}
 }
@@ -268,7 +268,7 @@ func TestToolOutputIsRedactedBeforeTheTranscript(t *testing.T) {
 }
 
 func TestScrubbedEnvDropsCredentials(t *testing.T) {
-	t.Setenv(keyEnvVar, "sk-should-not-be-inherited-000000")
+	t.Setenv(providerFor(string(providerDeepSeek)).KeyEnv, "sk-should-not-be-inherited-000000")
 	t.Setenv("OPENAI_API_KEY", "sk-openai-should-not-be-inherited")
 	t.Setenv("PATH", os.Getenv("PATH"))
 

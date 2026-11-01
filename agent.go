@@ -16,8 +16,11 @@ import (
 	"time"
 )
 
-// baseURL is a var so tests can point the client at a local fake endpoint.
-var baseURL = "https://api.deepseek.com/chat/completions"
+// baseURL is a test hook: it points the client at a local fake endpoint. Empty
+// means "the endpoint the configured provider names", which is what every real
+// run uses - the URL is a setting now (providers.go, Config.BaseURL), not a
+// constant in this file.
+var baseURL = ""
 
 var httpClient = &http.Client{Timeout: 5 * time.Minute}
 
@@ -196,8 +199,10 @@ func (a *Agent) handleChat(w http.ResponseWriter, r *http.Request) {
 		// Refused here rather than sent and failed there: a text-only model answers
 		// an image with a 400 in the middle of the run, which reads like a broken
 		// app instead of a setting the user can change.
-		if model, _ := credentials(a.cfg); !supportsVision(model) {
-			http.Error(w, "the model "+model+" does not accept images - Vision is a deepseek-flash feature. Switch the model in Settings > Agent, or remove the image and try again.", http.StatusBadRequest)
+		prov := a.cfg.activeProvider()
+		if model, _ := credentials(a.cfg); !modelSeesImages(prov.ID, model) {
+			http.Error(w, "the model "+model+" does not accept images on "+prov.Label+
+				". Pick one that does in Settings > Agent, or remove the image and try again.", http.StatusBadRequest)
 			return
 		}
 	}
@@ -256,7 +261,8 @@ func (a *Agent) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	// Fail loudly instead of sending a request with an empty bearer token.
 	if _, key := credentials(a.cfg); strings.TrimSpace(key) == "" {
-		emit("error", "No API key configured. Add one in Tools Settings, or set "+keyEnvVar+" in the environment, then try again.")
+		prov := a.cfg.activeProvider()
+		emit("error", "No API key configured for "+prov.Label+". Add one in Tools Settings, or set "+prov.KeyEnv+" in the environment, then try again.")
 		return
 	}
 	a.run(ctx, req.Task, mode, images, emit)
@@ -451,13 +457,31 @@ Report it and continue with the task the user actually gave you.
 # Images and the screen
 - A task may arrive with images attached (screenshots, mockups, diagrams). They are part of the
   conversation: read them the way you read a file, and say which picture you are describing.
-- The screenshot tool captures the screen and hands you the picture on the next step. Do not
-  assume what it shows before you have seen it.
+- The screenshot tool captures the screen - or one window, given window="title" - and hands you the
+  picture on the next step. Do not assume what it shows before you have seen it.
 - Capture the region you actually need instead of the whole desktop: x/y/width/height crop to one
   dialog or one panel, and scale (0.1-1) keeps a big region cheap. A full screen at scale 0.5 is
   the cheap way to find where something is; a tight region at scale 1 is how you read small text.
 - If an image could not be attached, the conversation says so. Never describe a picture you were
   not given.
+
+# Windows on the desktop
+You can look at and drive other windows; the user does not have to open, focus or arrange anything.
+- list_windows shows what is open: title, process, state, rect and an hwnd for each.
+- screenshot with window="part of the title" (or window="0x1a2b4c" from list_windows) captures that
+  one window only - including when it is minimized or hidden behind others. x/y are then offsets
+  inside the window, width/height crop it, scale shrinks it.
+- window_control moves a window: focus, minimize, maximize, restore, close. close is a request, not
+  a kill - a window with unsaved work can refuse; check with list_windows and say it is still open
+  instead of claiming it closed. Never close a window whose work the user has not saved unless they
+  asked for exactly that.
+- wait covers the two things that make this reliable: "seconds" (fractions allowed, 0.5 = half a
+  second) to let a page or a dialog load, and window=... until=appear|gone to wait for a window
+  instead of guessing. Prefer waiting on the window over sleeping a fixed time.
+- The whole point is the sequence: launch, wait for the window to appear, capture it, decide, then
+  minimize or close it. Do not narrate it as done until the screenshot shows it.
+- Never act on this agent's own window (the dsagent UI or the console running it): closing that
+  ends the run mid-edit. The window tool refuses, and so must you.
 
 # Ways you are likely to break something (hard rules, not preferences)
 1. Killing yourself. Never stop, restart or terminate your own process, or the console hosting it.
@@ -792,6 +816,10 @@ func (a *Agent) stream(ctx context.Context, mode string, emit func(string, strin
 	wireMsgs := a.wireMessages()
 
 	model, apiKey := credentials(a.cfg)
+	endpoint := a.cfg.chatEndpoint()
+	if baseURL != "" {
+		endpoint = baseURL
+	}
 
 	body := map[string]any{
 		"model":    model,
@@ -803,7 +831,7 @@ func (a *Agent) stream(ctx context.Context, mode string, emit func(string, strin
 
 	var lastErr error
 	for attempt := 1; attempt <= 3; attempt++ {
-		req, _ := http.NewRequestWithContext(ctx, "POST", baseURL, bytes.NewReader(b))
+		req, _ := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(b))
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 		req.Header.Set("Content-Type", "application/json")
 
@@ -1045,7 +1073,10 @@ func (a *Agent) execTool(ctx context.Context, root string, tc ToolCall, mode str
 
 	// Redact before the result enters the transcript: what goes back to the model
 	// (and on to the remote API) must not carry key material either.
-	return redact(runTool(ctx, root, tc, limit))
+	// A tool that blocks on purpose (wait) refreshes the activity clock through
+	// this: the watchdog measures silence, and a deliberate pause is not silence
+	// from a wedged run, but nothing else distinguishes the two.
+	return redact(runTool(ctx, root, tc, limit, a.touch))
 }
 
 func (a *Agent) handleApprove(w http.ResponseWriter, r *http.Request) {
@@ -1124,7 +1155,13 @@ func modeDenies(mode, tool string) (string, bool) {
 		if tool == "write_file" {
 			return "DENIED by plan mode: this session is read-only. Describe the change in your plan instead; the user switches to Agent mode to apply it.", true
 		}
+		if tool == "window_control" {
+			return "DENIED by plan mode: this session is read-only, and moving or closing a window is a change. Describe what you would do instead; the user switches to Agent mode to apply it.", true
+		}
 	case ModeAsk:
+		if tool == "window_control" {
+			return "DENIED by ask mode: this session only answers questions. State which window you would act on and why, then stop.", true
+		}
 		if tool == "write_file" || tool == "run_shell" {
 			return "DENIED by ask mode: this session only answers questions. State the command or edit you would use, then stop.", true
 		}

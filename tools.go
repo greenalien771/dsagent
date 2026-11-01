@@ -50,12 +50,22 @@ func toolSchemas(mode string) []map[string]any {
 		fn("web_fetch", "Fetch a URL and return its plain text (truncated to 8KB).", map[string]any{
 			"url": map[string]any{"type": "string"}}, []string{"url"}),
 
+		fn("list_windows", `Enumerate the visible windows on the desktop: title, process, state (minimized/maximized/normal), focus and rect, each with an hwnd. This is how you find a window to capture or control without the user opening or focusing anything.`, map[string]any{
+			"title": map[string]any{"type": "string", "description": "optional substring filter on the title"}}, nil),
+
+		fn("wait", `Pause the run, on purpose. Either 'seconds' (a number, fractions allowed: 0.5 is half a second) or 'window' plus 'until' to wait until a window appears or disappears - that is what makes "open, let it load, capture, close" reliable instead of a guess.`, map[string]any{
+			"seconds":    map[string]any{"type": "number", "description": "how long to sleep, e.g. 3 or 0.5"},
+			"window":     map[string]any{"type": "string", "description": "title substring or hwnd to wait for"},
+			"until":      map[string]any{"type": "string", "enum": []string{"appear", "gone"}, "description": "condition to wait for, default appear"},
+			"timeout_ms": map[string]any{"type": "integer", "description": "give up after this long, default 10000"}}, nil),
+
 		fn("screenshot", `Capture the screen as an image you can then look at. Pass x/y/width/height to grab only one region: that is how you zoom in on a dialog, an error box or a chart instead of guessing from a full-screen picture. Pass scale (0.1-1) to shrink a big region so it costs fewer tokens. The image appears on the step after this call.`, map[string]any{
 			"x":      map[string]any{"type": "integer", "description": "left edge in screen pixels, default 0"},
 			"y":      map[string]any{"type": "integer", "description": "top edge in screen pixels, default 0"},
 			"width":  map[string]any{"type": "integer", "description": "region width in pixels, default the whole desktop"},
 			"height": map[string]any{"type": "integer", "description": "region height in pixels, default the whole desktop"},
-			"scale":  map[string]any{"type": "number", "description": "zoom factor 0.1-1.0, default 1 (native pixels)"}}, nil),
+			"scale":  map[string]any{"type": "number", "description": "zoom factor 0.1-1.0, default 1 (native pixels)"},
+			"window": map[string]any{"type": "string", "description": "title substring or hwnd from list_windows: capture just that window, even if it is minimized or behind others, without the user opening or focusing it. x/y then offset inside the window"}}, nil),
 	}
 
 	// Mutating tools: agent always, plan never, ask never.
@@ -64,6 +74,16 @@ func toolSchemas(mode string) []map[string]any {
 			fn("write_file", "Create or overwrite a text file.", map[string]any{
 				"path":    map[string]any{"type": "string"},
 				"content": map[string]any{"type": "string"}}, []string{"path", "content"}))
+	}
+
+	// Window control is a side effect on something outside the workspace, so it
+	// is offered only where side effects are allowed at all: the same rule
+	// write_file follows, and for the same reason.
+	if mode != ModePlan && mode != ModeAsk {
+		tools = append(tools,
+			fn("window_control", `Minimize, maximize, restore, focus or close another window by title or hwnd. Closing is a request (WM_CLOSE), not a kill: a window with unsaved work can refuse and will still be open - check with list_windows and say so rather than claiming it closed. This never touches the agent's own window.`, map[string]any{
+				"action": map[string]any{"type": "string", "enum": []string{"focus", "minimize", "maximize", "restore", "close"}},
+				"window": map[string]any{"type": "string", "description": "title substring, or an hwnd from list_windows"}}, []string{"action", "window"}))
 	}
 
 	// run_shell is how plan mode investigates read-only, so it stays in plan
@@ -81,7 +101,7 @@ func toolSchemas(mode string) []map[string]any {
 // on it for a privacy reason rather than a destructive one: it ships the
 // contents of the user's screen to the remote API.
 func needsApproval(name string) bool {
-	return name == "run_shell" || name == "write_file" || name == "screenshot"
+	return name == "run_shell" || name == "write_file" || name == "screenshot" || name == "window_control"
 }
 
 // safeJoin resolves rel against root and refuses anything that lands outside it.
@@ -135,7 +155,9 @@ func resolveExisting(p string) string {
 // runTool executes one tool call. shellLimit is the per-command cap for
 // run_shell; the caller reads it from the config so the number is a setting
 // rather than a constant of the binary.
-func runTool(ctx context.Context, root string, tc ToolCall, shellLimit time.Duration) string {
+// poke is called by tools that block on purpose (wait) so the run does not look
+// idle to the watchdog while it is deliberately sleeping.
+func runTool(ctx context.Context, root string, tc ToolCall, shellLimit time.Duration, poke func()) string {
 	var args map[string]any
 	if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
 		return "BAD ARGS: " + err.Error() + " â€” retry with valid JSON matching the schema"
@@ -265,6 +287,15 @@ func runTool(ctx context.Context, root string, tc ToolCall, shellLimit time.Dura
 		}
 		return out
 
+	case "list_windows":
+		return listWindowsTool(ctx, tc.Function.Arguments)
+
+	case "window_control":
+		return windowControlTool(ctx, tc.Function.Arguments)
+
+	case "wait":
+		return waitTool(ctx, tc.Function.Arguments, poke)
+
 	case "web_fetch":
 		raw := strings.TrimSpace(str("url"))
 		u, err := url.Parse(raw)
@@ -337,14 +368,21 @@ func webFetchClient(allowLocal bool) *http.Client {
 // secretEnvVars are the credential variables a tool-launched process must not
 // inherit. Only this agent's own key plus other LLM vendor keys are stripped;
 // everything else in the user's environment is passed through untouched.
-var secretEnvVars = map[string]bool{
-	keyEnvVar:             true,
-	"OPENAI_API_KEY":      true,
-	"ANTHROPIC_API_KEY":   true,
-	"GEMINI_API_KEY":      true,
-	"GOOGLE_API_KEY":      true,
-	"HUGGINGFACE_API_KEY": true,
-}
+var secretEnvVars = func() map[string]bool {
+	m := map[string]bool{
+		"OPENAI_API_KEY":      true,
+		"ANTHROPIC_API_KEY":   true,
+		"GEMINI_API_KEY":      true,
+		"GOOGLE_API_KEY":      true,
+		"HUGGINGFACE_API_KEY": true,
+	}
+	// Every provider's variable, so a tool-launched process cannot inherit
+	// whichever key the agent happens to be running on.
+	for _, name := range providerKeyEnvVars() {
+		m[name] = true
+	}
+	return m
+}()
 
 // scrubbedEnv returns os.Environ() without the credential variables above.
 func scrubbedEnv() []string {

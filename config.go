@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -11,10 +12,6 @@ import (
 	"sync"
 	"time"
 )
-
-// keyEnvVar lets the user keep the key completely off disk.
-// When it is set it wins over the stored key and is never persisted.
-const keyEnvVar = "DEEPSEEK_API_KEY"
 
 // redacted is what the UI/transcript sees in place of a secret.
 const redacted = "sk-[REDACTED]"
@@ -32,6 +29,18 @@ type Config struct {
 	Model    string `json:"model"`
 	WorkDir  string `json:"workdir"`
 	MaxSteps int    `json:"max_steps"`
+
+	// Provider picks which vendor endpoint the agent talks to (providers.go).
+	// A plain string rather than a providerID: a hand-edited config.json with an
+	// unknown value must load as the default instead of failing to unmarshal.
+	Provider string `json:"provider"`
+
+	// BaseURL optionally replaces the provider's own endpoint. That is how the
+	// other DashScope region, a self-hosted gateway or a proxy is used without a
+	// new build; empty means "the URL the provider entry names". Setting it
+	// sends this provider's key wherever it points, which is why Settings keeps
+	// it as an advanced field.
+	BaseURL string `json:"base_url,omitempty"`
 
 	// AutoApprove skips the per-tool approval prompt (run_shell, write_file).
 	// Dangerous: the agent then runs unattended. Set from Safety in Settings.
@@ -97,7 +106,18 @@ func configDir() string {
 }
 
 func configPath() string { return filepath.Join(configDir(), "config.json") }
-func secretPath() string { return filepath.Join(configDir(), "api_key.bin") }
+
+// secretPath is the sealed key for one provider family. The family is part of
+// the file name so choosing another provider can never hand the previous
+// vendor's key to a different endpoint.
+func secretPath(keyID string) string {
+	return filepath.Join(configDir(), "api_key_"+keyID+".bin")
+}
+
+// legacySecretPath is the single file builds before providers wrote. It always
+// belonged to DeepSeek, which was then the only endpoint, so it is read as
+// DeepSeek's fallback and removed along with DeepSeek's key.
+func legacySecretPath() string { return filepath.Join(configDir(), "api_key.bin") }
 
 // legacyConfig is the shape older builds wrote, back when the key sat in
 // plaintext inside config.json.
@@ -105,10 +125,22 @@ type legacyConfig struct {
 	APIKey *string `json:"api_key"`
 }
 
+// defaultConfig is what a first launch runs on, and the shape a corrupt or
+// partial file is repaired into.
+func defaultConfig() *Config {
+	prov := providerFor(string(defaultProviderID))
+	return &Config{
+		Provider:        string(prov.ID),
+		Model:           prov.Model,
+		MaxSteps:        25,
+		IdleTimeoutSec:  defaultIdleTimeoutSec,
+		RunTimeoutMin:   defaultRunTimeoutMin,
+		ShellTimeoutSec: defaultShellTimeoutSec,
+	}
+}
+
 func loadConfig() *Config {
-	c := &Config{Model: "deepseek-flash", MaxSteps: 25,
-		IdleTimeoutSec: defaultIdleTimeoutSec, RunTimeoutMin: defaultRunTimeoutMin,
-		ShellTimeoutSec: defaultShellTimeoutSec}
+	c := defaultConfig()
 
 	raw, err := os.ReadFile(configPath())
 	if err == nil {
@@ -116,9 +148,7 @@ func loadConfig() *Config {
 			// A corrupt file must not take the agent down; start clean but keep
 			// the unreadable original for forensics.
 			os.Rename(configPath(), configPath()+".corrupt")
-			c = &Config{Model: "deepseek-flash", MaxSteps: 25,
-				IdleTimeoutSec: defaultIdleTimeoutSec, RunTimeoutMin: defaultRunTimeoutMin,
-				ShellTimeoutSec: defaultShellTimeoutSec}
+			c = defaultConfig()
 		} else {
 			// Migrate a plaintext key out of config.json as soon as we see one.
 			var legacy legacyConfig
@@ -136,8 +166,11 @@ func loadConfig() *Config {
 		}
 	}
 
+	// The provider decides the model fallback: a vendor rejects another vendor's
+	// model name with a 400, so the default has to follow the choice.
+	c.Provider = string(providerFor(c.Provider).ID)
 	if c.Model == "" {
-		c.Model = "deepseek-flash"
+		c.Model = providerFor(c.Provider).Model
 	}
 	if c.MaxSteps <= 0 {
 		c.MaxSteps = 25
@@ -163,18 +196,34 @@ func loadConfig() *Config {
 	}
 
 	// Environment wins: nothing has to be written to disk at all.
-	if k := strings.TrimSpace(os.Getenv(keyEnvVar)); k != "" {
-		c.APIKey = k
-		c.KeySource = "env"
-	} else if k, err := loadStoredKey(); err == nil && k != "" {
-		c.APIKey = k
-		c.KeySource = "store"
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-		fmt.Fprintf(os.Stderr, "dsagent: stored API key could not be decrypted: %v\n", err)
-	}
-
-	registerSecret(c.APIKey)
+	c.resolveKeyLocked()
 	return c
+}
+
+// resolveKeyLocked fills APIKey and KeySource for the configured provider.
+//
+// Callers hold cfgMu, or are loadConfig before the config is shared. Both
+// sources are provider-scoped - this provider's environment variable and this
+// provider's sealed file - because the alternative is a DeepSeek key in memory
+// being sent to z.ai's endpoint under a model name z.ai has never heard of.
+func (c *Config) resolveKeyLocked() {
+	prov := providerFor(c.Provider)
+	c.APIKey, c.KeySource = "", ""
+
+	if k := strings.TrimSpace(os.Getenv(prov.KeyEnv)); k != "" {
+		c.APIKey, c.KeySource = k, "env"
+		registerSecret(k)
+		return
+	}
+	k, err := loadStoredKey(prov.KeyID)
+	if err == nil && k != "" {
+		c.APIKey, c.KeySource = k, "store"
+		registerSecret(k)
+		return
+	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintf(os.Stderr, "dsagent: the stored %s key could not be decrypted: %v\n", prov.Label, err)
+	}
 }
 
 // saveConfig persists everything except the secret. The file is created with
@@ -223,7 +272,7 @@ func (c *Config) storeAPIKey(key string) error {
 	if err != nil {
 		return err
 	}
-	if err := writeFileAtomic(secretPath(), sealed); err != nil {
+	if err := writeFileAtomic(secretPath(providerFor(c.Provider).KeyID), sealed); err != nil {
 		return err
 	}
 	c.APIKey = key
@@ -232,8 +281,13 @@ func (c *Config) storeAPIKey(key string) error {
 	return nil
 }
 
-func loadStoredKey() (string, error) {
-	b, err := os.ReadFile(secretPath())
+func loadStoredKey(keyID string) (string, error) {
+	b, err := os.ReadFile(secretPath(keyID))
+	if errors.Is(err, os.ErrNotExist) && keyID == keyIDDeepSeek {
+		// A file from before providers existed: DeepSeek was the only endpoint,
+		// so the old single file is DeepSeek's key.
+		b, err = os.ReadFile(legacySecretPath())
+	}
 	if err != nil {
 		return "", err
 	}
@@ -249,11 +303,20 @@ func clearAPIKey(c *Config) error {
 	if c.KeySource != "env" {
 		c.KeySource = ""
 	}
-	err := os.Remove(secretPath())
-	if errors.Is(err, os.ErrNotExist) {
-		err = nil
+	prov := providerFor(c.Provider)
+	paths := []string{secretPath(prov.KeyID)}
+	if prov.KeyID == keyIDDeepSeek {
+		// Remove the pre-provider file too, or "Remove stored key" would leave a
+		// working key on disk that nothing on screen mentions.
+		paths = append(paths, legacySecretPath())
 	}
-	return err
+	var first error
+	for _, p := range paths {
+		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) && first == nil {
+			first = err
+		}
+	}
+	return first
 }
 
 // ---- request/response shapes -------------------------------------------
@@ -261,24 +324,42 @@ func clearAPIKey(c *Config) error {
 // configView is everything the browser is allowed to know. Note the absence of
 // any key material: only a boolean and a masked fingerprint ever leave here.
 type configView struct {
-	Model           string `json:"model"`
-	WorkDir         string `json:"workdir"`
-	MaxSteps        int    `json:"max_steps"`
-	AutoApprove     bool   `json:"auto_approve"`
-	IdleTimeoutSec  int    `json:"idle_timeout_sec"`
-	RunTimeoutMin   int    `json:"run_timeout_min"`
-	ShellTimeoutSec int    `json:"shell_timeout_sec"`
-	APIKeySet       bool   `json:"api_key_set"`
-	APIKeyHint      string `json:"api_key_hint,omitempty"`
-	APIKeySource    string `json:"api_key_source,omitempty"`
-	APIKeyEditable  bool   `json:"api_key_editable"`
+	Model         string `json:"model"`
+	Provider      string `json:"provider"`
+	ProviderLabel string `json:"provider_label"`
+	// KeyEnv and ProviderURL are what the pane needs to explain itself: which
+	// variable can hold the key and which endpoint the provider would use. None
+	// of this is secret - the key itself never appears here.
+	KeyEnv          string     `json:"key_env"`
+	ProviderURL     string     `json:"provider_url"`
+	BaseURL         string     `json:"base_url"`
+	Models          []string   `json:"models"`
+	Providers       []provider `json:"providers"`
+	WorkDir         string     `json:"workdir"`
+	MaxSteps        int        `json:"max_steps"`
+	AutoApprove     bool       `json:"auto_approve"`
+	IdleTimeoutSec  int        `json:"idle_timeout_sec"`
+	RunTimeoutMin   int        `json:"run_timeout_min"`
+	ShellTimeoutSec int        `json:"shell_timeout_sec"`
+	APIKeySet       bool       `json:"api_key_set"`
+	APIKeyHint      string     `json:"api_key_hint,omitempty"`
+	APIKeySource    string     `json:"api_key_source,omitempty"`
+	APIKeyEditable  bool       `json:"api_key_editable"`
 }
 
 func viewOf(c *Config) configView {
 	cfgMu.Lock()
 	defer cfgMu.Unlock()
+	prov := providerFor(c.Provider)
 	return configView{
 		Model:           c.Model,
+		Provider:        string(prov.ID),
+		ProviderLabel:   prov.Label,
+		KeyEnv:          prov.KeyEnv,
+		ProviderURL:     prov.ChatURL,
+		BaseURL:         c.BaseURL,
+		Models:          prov.Models,
+		Providers:       providers,
 		WorkDir:         c.WorkDir,
 		MaxSteps:        c.MaxSteps,
 		AutoApprove:     c.AutoApprove,
@@ -312,6 +393,9 @@ type configPatch struct {
 	WorkDir     *string `json:"workdir"`
 	MaxSteps    *int    `json:"max_steps"`
 	AutoApprove *bool   `json:"auto_approve"`
+	// Provider switches vendor; base_url overrides that vendor's endpoint.
+	Provider *string `json:"provider"`
+	BaseURL  *string `json:"base_url"`
 	// Watchdog timers. Out-of-range values are refused rather than clamped:
 	// a silently rewritten timeout is worse than one that did not save.
 	IdleTimeoutSec  *int    `json:"idle_timeout_sec"`
@@ -338,11 +422,34 @@ func applyPatch(c *Config, p configPatch) error {
 
 	var errs []string
 
+	// Provider first: everything below is provider-scoped. The key is stored per
+	// provider family, the model name has to belong to the chosen vendor, and an
+	// endpoint override belongs to that vendor too - carrying either across a
+	// switch is a 400 at best and one vendor's key on another's endpoint at
+	// worst.
+	switched := false
+	if p.Provider != nil {
+		if prov, ok := providerByID(*p.Provider); !ok {
+			errs = append(errs, fmt.Sprintf("unknown provider %q; expected one of %s",
+				strings.TrimSpace(*p.Provider), strings.Join(providerIDs(), ", ")))
+		} else if c.Provider != string(prov.ID) {
+			c.Provider = string(prov.ID)
+			c.BaseURL = ""
+			switched = true
+		}
+	}
+	if switched {
+		// Swap in whatever key this provider already has, from its environment
+		// variable or its sealed file, instead of keeping the old one in memory.
+		c.resolveKeyLocked()
+	}
+
 	if p.APIKey != nil {
 		k := strings.TrimSpace(*p.APIKey)
 		if k != "" {
 			if c.KeySource == "env" {
-				errs = append(errs, keyEnvVar+" is set in the environment and overrides stored keys; unset it to manage the key from the UI")
+				errs = append(errs, providerFor(c.Provider).KeyEnv+
+					" is set in the environment and overrides stored keys; unset it to manage the key from the UI")
 			} else if err := c.storeAPIKey(k); err != nil {
 				errs = append(errs, "could not store key: "+err.Error())
 			}
@@ -354,8 +461,22 @@ func applyPatch(c *Config, p configPatch) error {
 		}
 	}
 
+	if p.BaseURL != nil {
+		if u := strings.TrimSpace(*p.BaseURL); u == "" {
+			c.BaseURL = ""
+		} else if err := validateEndpoint(u); err != nil {
+			errs = append(errs, err.Error())
+		} else {
+			c.BaseURL = u
+		}
+	}
+
 	if p.Model != nil && strings.TrimSpace(*p.Model) != "" {
 		c.Model = strings.TrimSpace(*p.Model)
+	} else if switched {
+		// A model name belongs to one vendor, so a switch that does not name one
+		// lands on the new provider's default rather than on a 400.
+		c.Model = providerFor(c.Provider).Model
 	}
 	if p.WorkDir != nil && strings.TrimSpace(*p.WorkDir) != "" {
 		wd := strings.TrimSpace(*p.WorkDir)
@@ -412,6 +533,26 @@ func applyPatch(c *Config, p configPatch) error {
 	}
 	if len(errs) > 0 {
 		return errors.New(strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+// validateEndpoint checks an endpoint override before it is stored.
+//
+// Only the shape is checked: whether the host answers, and whether it wants this
+// provider's key, is a question for the first request. A stored nonsense URL
+// would otherwise fail every run with a network error that reads like the
+// agent's fault rather than a typo in Settings.
+func validateEndpoint(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid endpoint: %v", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return errors.New("the endpoint must start with http:// or https://")
+	}
+	if u.Host == "" {
+		return errors.New("the endpoint has no host")
 	}
 	return nil
 }
@@ -484,6 +625,24 @@ func credentials(c *Config) (model, key string) {
 	model, key = c.Model, c.APIKey
 	registerSecret(key)
 	return model, key
+}
+
+// activeProvider is the registry entry for the current setting.
+func (c *Config) activeProvider() provider {
+	cfgMu.Lock()
+	defer cfgMu.Unlock()
+	return providerFor(c.Provider)
+}
+
+// chatEndpoint is the URL one streaming request goes to: the provider's own
+// endpoint unless Settings stores an override.
+func (c *Config) chatEndpoint() string {
+	cfgMu.Lock()
+	defer cfgMu.Unlock()
+	if u := strings.TrimSpace(c.BaseURL); u != "" {
+		return u
+	}
+	return providerFor(c.Provider).ChatURL
 }
 
 // ---- secret redaction ---------------------------------------------------

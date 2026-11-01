@@ -9,12 +9,12 @@
   <img src="https://img.shields.io/badge/Go-1.21%2B-blue" alt="Go 1.21+">
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License: MIT">
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey" alt="Platform: Windows | macOS | Linux">
-  <img src="https://img.shields.io/badge/tools-6-blue" alt="6 tools">
+  <img src="https://img.shields.io/badge/tools-9-blue" alt="9 tools">
 </p>
 
 A coding agent in one Go binary. It serves its own UI on loopback, talks to the
 DeepSeek `/chat/completions` API, and runs tools - list, read, write, shell,
-fetch, screenshot - inside a working directory you choose. Mutating calls stop
+fetch, screenshot, window control - inside a working directory you choose. Mutating calls stop
 at an approval card before they run, and a call classified dangerous needs the
 confirmation word typed into that card.
 
@@ -115,6 +115,21 @@ the environment variable and keep nothing on disk.
   region so it costs fewer tokens. Capture is a separate approval-gated step: it
   uploads what is on your screen to the API, so it prompts unless auto-approve is
   on, and always in Plan and Ask mode.
+- **It can capture one window on its own**, without you opening or focusing
+  anything: `list_windows` enumerates what is on the desktop (title, process,
+  state, hwnd), and `screenshot` with `window` set to a title substring or an
+  hwnd grabs just that window - including when it is minimized or behind another
+  one. `x`/`y` then offset inside the window, `width`/`height` crop it.
+- **It can drive windows too**: `window_control` focuses, minimizes, maximizes,
+  restores or closes one. `close` posts a close request, not a kill - a window
+  with unsaved work can refuse, and the result says the window is still open
+  instead of claiming success. It never touches the dsagent window itself: the
+  script refuses by pid, because closing that window is closing the run.
+- **`wait` makes a sequence reliable** rather than a guess: `seconds` (fractions
+  allowed, `0.5` is half a second) for "let it load", or `window` with
+  `until: appear|gone` to wait for the state you actually need. Launch, wait for
+  the window, capture, minimize or close - the pause reports to the watchdog as
+  activity, so a deliberate wait is never mistaken for a stalled run.
 - `deepseek-v4-pro` is text-only. An image is refused up front with a message that
   says so, instead of failing mid-run.
 - Inline images are kept in the conversation so a follow-up question still works,
@@ -130,8 +145,8 @@ service. They are also the parts worth reading before you trust it:
   authorities it created. Requests with a foreign `Origin`/`Host` (the shape of a
   DNS-rebinding attack from a hostile web page) are rejected, and responses carry
   a strict CSP.
-- **Approval gate.** `run_shell` and `write_file` always prompt unless you enable
-  auto-approve. `web_fetch` prompts too whenever the URL is flagged - one that
+- **Approval gate.** `run_shell`, `write_file` and `window_control` always prompt
+  unless you enable auto-approve. `web_fetch` prompts too whenever the URL is flagged - one that
   resolves to this machine or the local network - and `screenshot` always prompts
   outside Agent mode, because it uploads your desktop. Auto-approve is ignored
   entirely in Plan mode and never covers a call classified *dangerous* -
