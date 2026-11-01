@@ -173,6 +173,20 @@ them. Which names do is a per-provider rule in `providers.go`, not a constant.
   `until: appear|gone` to wait for the state you actually need. Launch, wait for
   the window, capture, minimize or close - the pause reports to the watchdog as
   activity, so a deliberate wait is never mistaken for a stalled run.
+- **Why these three exist only on Windows.** The rule is the OS, not the code.
+  macOS grants the same powers through Screen Recording and Accessibility, which
+  the user switches on once in System Settings, and the backend there would be
+  `screencapture` plus CoreGraphics; X11 grants them too, through `xwd` and
+  `xdotool`. Neither is written here, but neither is blocked. Wayland is the
+  case that is blocked: no protocol lets one client enumerate or drive another
+  client's toplevels, so `list_windows` and `window_control` have no
+  counterpart at any budget. `screenshot` would degrade to
+  `org.freedesktop.portal.Screenshot` - a consent dialog, and a source the user
+  picks rather than a window the agent names. Shelling out does not rescue it
+  either: a portal call returns a `Request` object path and the real answer
+  arrives later as a D-Bus signal, which `gdbus call` exits before ever seeing,
+  so a Wayland backend means a D-Bus client and a PipeWire consumer - the first
+  Go dependency this tree would carry, and cgo for the second.
 - **A text-only model is refused up front**, with a message saying so, instead of
   failing mid-run: `deepseek-v4-pro` and the reasoner family, Qwen's non-VL
   models, and `glm-5.3` itself. `deepseek-flash`, `glm-5.3-flash`, and the `-v`,
