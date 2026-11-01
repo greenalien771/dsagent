@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -209,7 +210,54 @@ func imagePartFromFile(path string) (imagePart, error) {
 	return imagePart{Name: name, DataURL: "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(raw)}, nil
 }
 
-// attachShot hands a captured screenshot to the model.
+// checkImageFile reports whether path is an image this build can send, without
+// reading all of it: the type comes from the first 512 bytes, the same way
+// http.DetectContentType decides it for an upload, and the caps are the ones
+// normalizeImages enforces.
+//
+// A tool call checks this before anything is encoded, so a folder, a renamed
+// text file or a 40 MB TIFF is refused with one sentence instead of becoming a
+// base64 payload the API rejects halfway through the task.
+func checkImageFile(path string) (int64, error) {
+	st, err := os.Stat(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return 0, errors.New("there is no such file; call list_dir to see what exists")
+		}
+		return 0, err
+	}
+	if st.IsDir() {
+		return 0, errors.New("this is a folder, not an image file; call list_dir for its contents")
+	}
+	if !st.Mode().IsRegular() {
+		return 0, errors.New("this is not a regular file")
+	}
+	if st.Size() == 0 {
+		return 0, errors.New("the file is empty")
+	}
+	if st.Size() > maxImageBytes {
+		return 0, fmt.Errorf("%.1f MB is over the %d MB image limit",
+			float64(st.Size())/(1<<20), maxImageBytes>>20)
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+
+	head := make([]byte, 512)
+	n, err := io.ReadFull(f, head)
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return 0, err
+	}
+	if mime := http.DetectContentType(head[:n]); !imageMIME[mime] {
+		return 0, fmt.Errorf("%s is not a JPEG, PNG, GIF or WebP image; read_file is for text", mime)
+	}
+	return st.Size(), nil
+}
+
+// attachImage hands one picture from disk to the model.
 //
 // It has to be a user message: the API accepts image blocks in user messages
 // only, so the picture cannot ride on the tool result that produced it. The
@@ -217,7 +265,12 @@ func imagePartFromFile(path string) (imagePart, error) {
 // naturally - the model sees "here is the picture you asked for" on its next
 // step, which is also why the tool description promises the image one step
 // later rather than immediately.
-func (a *Agent) attachShot(path string, emit func(string, string)) {
+//
+// kind and intro are what the two callers differ in: a live capture of the
+// screen, and a file the model asked to look at. Both must say what the picture
+// actually is, because a mockup described as "the screen" is how a model ends up
+// reporting the wrong thing.
+func (a *Agent) attachImage(path, kind, intro string, emit func(string, string)) {
 	prov := a.cfg.activeProvider()
 	model, _ := credentials(a.cfg)
 
@@ -226,24 +279,38 @@ func (a *Agent) attachShot(path string, emit func(string, string)) {
 		err = fmt.Errorf("the model %s does not accept images", model)
 	}
 	if err != nil {
-		// Tell the model the truth instead of leaving it to describe a screen it
+		// Tell the model the truth instead of leaving it to describe a picture it
 		// never received.
 		a.mu.Lock()
 		a.messages = append(a.messages, Msg{Role: "user",
-			Content: "NOTE: the screenshot was captured but could not be attached (" + err.Error() + "). You cannot see it: say so, and ask the user to attach the image themselves."})
+			Content: "NOTE: the " + kind + " could not be attached (" + err.Error() + "). You cannot see it: say so, and ask the user to attach the image themselves."})
 		a.mu.Unlock()
-		emit("status", "Screenshot captured but not attached: "+err.Error())
+		emit("status", "Not attached: "+err.Error())
 		return
 	}
 
 	a.mu.Lock()
 	a.messages = append(a.messages, Msg{Role: "user",
-		Content: "[screenshot attached: " + part.Name + "] This is the screen as it is right now. Describe only what is actually visible in it.",
+		Content: "[" + kind + " attached: " + part.Name + "] " + intro,
 		Images:  []imagePart{part}})
 	a.mu.Unlock()
 
 	// The same picture goes to the browser, so the transcript shows what the
 	// agent was looking at instead of asking the user to trust a description.
 	emit("image", part.DataURL)
-	emit("status", "Screenshot attached to the conversation: "+part.Name)
+	emit("status", "Attached to the conversation: "+part.Name)
+}
+
+// attachShot is attachImage for a live capture: the screen as it is right now.
+func (a *Agent) attachShot(path string, emit func(string, string)) {
+	a.attachImage(path, "screenshot",
+		"This is the screen as it is right now. Describe only what is actually visible in it.", emit)
+}
+
+// attachReadImage is attachImage for a file the model asked to look at. It is an
+// ordinary file rather than a fresh capture, and saying so is the difference
+// between "the screen says X" and "this picture of the screen says X".
+func (a *Agent) attachReadImage(path string, emit func(string, string)) {
+	a.attachImage(path, "image",
+		"This is the image file "+filepath.Base(path)+" from the workspace, loaded because you asked for it. Describe only what is actually visible in it.", emit)
 }

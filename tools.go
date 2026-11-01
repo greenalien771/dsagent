@@ -47,6 +47,11 @@ func toolSchemas(mode string) []map[string]any {
 		fn("read_file", "Read a text file. Returns up to 8KB; pass offset to page.", map[string]any{
 			"path":   map[string]any{"type": "string"},
 			"offset": map[string]any{"type": "integer", "description": "byte offset, default 0"}}, []string{"path"}),
+		// read_image is the file counterpart of screenshot: the picture rides on
+		// the same SHOT path, so a PNG on disk reaches the model the way a live
+		// capture does. It is offered in every mode, because reading is free.
+		fn("read_image", "Look at an image file that already exists on disk: PNG, JPEG, GIF or WebP, inside the working dir. The picture is attached to the conversation and you will see it on the next step, exactly like a screenshot. Use read_file for text; this is how you look at a mockup, a diagram, a saved capture or a photo.", map[string]any{
+			"path": map[string]any{"type": "string", "description": `e.g. "assets/logo.png" or "testdata/vision/sample.png"`}}, []string{"path"}),
 
 		fn("web_fetch", "Fetch a URL and return its plain text (truncated to 8KB).", map[string]any{
 			"url": map[string]any{"type": "string"}}, []string{"url"}),
@@ -254,6 +259,29 @@ func runTool(ctx context.Context, root string, tc ToolCall, shellLimit time.Dura
 			chunk = chunk[:len(chunk)-1]
 		}
 		return string(chunk) + fmt.Sprintf("\nâ€¦ TRUNCATED at %d/%d bytes; call read_file with offset=%d", off+len(chunk), len(b), off+len(chunk))
+
+	case "read_image":
+		p, err := safeJoin(root, str("path"))
+		if err != nil {
+			return err.Error()
+		}
+		// Validate before anything is encoded and sent: the same content sniffing
+		// and the same caps an upload from the composer goes through, so a folder
+		// or a renamed .txt fails here with a sentence rather than at the API with
+		// a 400 halfway through the task.
+		size, err := checkImageFile(p)
+		if err != nil {
+			return "ERROR: " + str("path") + ": " + err.Error()
+		}
+		rel, rerr := filepath.Rel(root, p)
+		if rerr != nil {
+			rel = str("path")
+		}
+		// The SHOT tag is what hands the picture to the model (see attachImage):
+		// image blocks are only legal in a user message, so the file is attached
+		// one step after this result, not inside it.
+		return fmt.Sprintf("Loaded the image %s (%s).\nThe image is attached to the conversation - you will see it on the next step; describe what is actually visible rather than what you expect.\n%s%s",
+			rel, humanBytes(size), shotTag, p)
 
 	case "write_file":
 		p, err := safeJoin(root, str("path"))

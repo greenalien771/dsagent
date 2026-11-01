@@ -269,6 +269,12 @@ func TestPruneImagesKeepsOneBudget(t *testing.T) {
 func TestShotFromResult(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "shot-1.png")
+	if _, ok := shotFromResult("Captured the screen.\nSHOT:" + p + "\n"); ok {
+		t.Fatal("a tag naming a file that does not exist was read as a capture")
+	}
+	if err := os.WriteFile(p, []byte{0x89, 'P', 'N', 'G'}, 0600); err != nil {
+		t.Fatal(err)
+	}
 	if _, ok := shotFromResult("Captured the screen.\nSHOT:" + p + "\n"); !ok {
 		t.Fatal("tag not recognised")
 	}

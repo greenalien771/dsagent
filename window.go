@@ -352,7 +352,7 @@ func waitTool(ctx context.Context, raw string, poke func()) string {
 // exactly like a desktop capture does.
 func captureWindow(ctx context.Context, args shotArgs) string {
 	if runtime.GOOS != "windows" {
-		return "ERROR: capturing a single window is only implemented on Windows. On this machine, capture the screen another way and attach the file with read_file (text) or the composer's Add Image."
+		return "ERROR: capturing a single window is only implemented on Windows. On this machine, capture the screen another way and look at a saved picture with read_image, or attach it from the composer's Add Image."
 	}
 	ref := windowRef{Title: args.Window}
 	if args.WindowID != 0 {

@@ -158,7 +158,7 @@ func parseShotArgs(raw string) (shotArgs, error) {
 // itself reaches the model through attachShot, not through this return value.
 func captureScreenshot(ctx context.Context, raw string) (string, error) {
 	if runtime.GOOS != "windows" {
-		return "ERROR: the screenshot tool is only implemented on Windows. On this machine, capture the screen another way and attach the file with read_file (text) or the composer's Add Image.", nil
+		return "ERROR: the screenshot tool is only implemented on Windows. On this machine, capture the screen another way and look at a saved picture with read_image, or attach it from the composer's Add Image.", nil
 	}
 	args, err := parseShotArgs(raw)
 	if err != nil {
@@ -270,6 +270,14 @@ func shotFromResult(out string) (string, bool) {
 		path = strings.TrimSpace(path[:nl])
 	}
 	if path == "" {
+		return "", false
+	}
+	// A real capture always exists on disk. Requiring that is not just a sanity
+	// check: any tool result that merely *quotes* a line containing the tag - the
+	// agent reading its own source, a log, a diff - would otherwise be parsed as a
+	// path, and attaching it produced a note about a file named `" + p)` in the
+	// transcript. Only a regular file can be an attachment.
+	if st, err := os.Stat(path); err != nil || !st.Mode().IsRegular() {
 		return "", false
 	}
 	return path, true

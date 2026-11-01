@@ -465,6 +465,10 @@ Report it and continue with the task the user actually gave you.
 - Capture the region you actually need instead of the whole desktop: x/y/width/height crop to one
   dialog or one panel, and scale (0.1-1) keeps a big region cheap. A full screen at scale 0.5 is
   the cheap way to find where something is; a tight region at scale 1 is how you read small text.
+- A picture that is already on disk is not the screen: read_image loads one file
+  (PNG, JPEG, GIF, WebP) from the workspace and hands it to you one step later,
+  while screenshot captures what is on the screen right now. Use read_image for a
+  saved capture, a mockup or a diagram instead of asking the user to attach it.
 - If an image could not be attached, the conversation says so. Never describe a picture you were
   not given.
 
@@ -753,7 +757,14 @@ func (a *Agent) run(ctx context.Context, task, mode string, images []imagePart, 
 			// legal in a user message only, so it becomes one, one step after the
 			// tool call that asked for it.
 			if path, ok := shotFromResult(out); ok {
-				a.attachShot(path, emit)
+				// A file the model asked to look at and a fresh capture arrive the
+				// same way but are not the same thing, so they are announced
+				// differently.
+				if tc.Function.Name == "read_image" {
+					a.attachReadImage(path, emit)
+				} else {
+					a.attachShot(path, emit)
+				}
 			}
 			// A cancelled run must stop here: continuing would run tools nobody is
 			// watching any more. The rest of the batch is closed out first.
