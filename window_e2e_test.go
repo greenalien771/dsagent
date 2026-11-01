@@ -4,10 +4,22 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
+
+// requireWindows states the requirement of this file: window.ps1 drives Win32
+// through the user's own PowerShell, so on any other GOOS every call refuses
+// before it reaches the desktop and there is nothing here to assert. Each test
+// says so up front instead of failing a call and reporting the refusal as a bug.
+func requireWindows(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "windows" {
+		t.Skip("window control is Win32 through PowerShell, so it is Windows-only")
+	}
+}
 
 // The whole sequence the feature exists for, driven through the same functions
 // the agent calls: launch -> wait for the window -> capture it -> minimize ->
@@ -19,6 +31,7 @@ func TestWindowSequenceEndToEnd(t *testing.T) {
 	if testing.Short() {
 		t.Skip("starts a real application")
 	}
+	requireWindows(t)
 
 	ctx := context.Background()
 
@@ -114,6 +127,7 @@ func TestWindowSequenceEndToEnd(t *testing.T) {
 // Closing the agent's own process must be refused by the script, not attempted.
 // The check is by pid, so it holds even if the title matches.
 func TestWindowScriptRefusesOwnProcess(t *testing.T) {
+	requireWindows(t)
 	ctx := context.Background()
 	out, err := runWindowScript(ctx, windowArgs{
 		Action: "act", Act: "close", ID: int64(0), Scale: 1,
