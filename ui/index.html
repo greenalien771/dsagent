@@ -1337,6 +1337,7 @@
             <div class="key-hint">Model Context Protocol servers this agent can call as extra tools. One object per server: <code>name</code> and <code>command</code>, plus optional <code>args</code>, <code>env</code> (<code>"NAME=value"</code>) and <code>dir</code>. Their tools are offered in Agent mode only, and every call asks first unless Always Allow is on. A server starts with the next task, so a typo shows up in the status line instead of as a tool that never worked.</div>
             <div class="sw-actions">
               <button type="button" class="btn-sm ghost" onclick="reloadMCP()">Reload servers</button>
+              <button type="button" class="btn-sm ghost" onclick="stopMCP()">Stop servers</button>
               <span class="pref-hint" id="mcpState" style="margin:0">-</span>
             </div>
           </div>
@@ -3929,6 +3930,25 @@ function reloadMCP() {
       toast('MCP servers reloaded');
     })
     .catch(() => { if (el) el.textContent = 'could not reload the MCP servers'; });
+}
+
+// Stop is the same stop the agent has as a tool: the server is asked to leave
+// through its stdin, killed only if it ignores that, and it stays down - a later
+// tool call does not bring it back. Reload is how it comes back.
+function stopMCP() {
+  const el = $('#mcpState');
+  if (el) el.textContent = 'stopping servers...';
+  fetch('/api/mcp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'stop' })
+  })
+    .then((r) => r.json())
+    .then((d) => {
+      paintMCPState(d);
+      toast('MCP servers stopped');
+    })
+    .catch(() => { if (el) el.textContent = 'could not stop the MCP servers'; });
 }
 
 function saveConfig() {

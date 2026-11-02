@@ -92,6 +92,18 @@ func toolSchemas(mode string) []map[string]any {
 				"window": map[string]any{"type": "string", "description": "title substring, or an hwnd from list_windows"}}, []string{"action", "window"}))
 	}
 
+	// mcp_control is the agent's own handle on the MCP servers, not a tool one of
+	// them advertises. It answers the two things the transcript cannot: whether a
+	// server is still running, and how to stop one so it stays stopped instead of
+	// being started again by the next call.
+	if mode != ModePlan && mode != ModeAsk {
+		tools = append(tools,
+			fn("mcp_control", "Inspect, stop, start or restart the MCP servers this agent was configured with. status is free. stop is a real stop: the server is asked to leave through its stdin, killed only if it ignores that, and it stays down - the automatic restart a crashed server gets does not undo it - until start. Use status when a tool from a server failed and you need to know whether the server is still there, and restart to pick up a rebuilt binary, because a running executable cannot be replaced.", map[string]any{
+				"action": map[string]any{"type": "string", "enum": []string{"status", "stop", "start", "restart"}, "description": "what to do; the default is status"},
+				"name":   map[string]any{"type": "string", "description": "server name from the configuration; empty or all means every server"},
+			}, nil))
+	}
+
 	// run_shell is how plan mode investigates read-only, so it stays in plan
 	// (approval is forced there) and disappears entirely in ask mode.
 	if mode != ModeAsk {

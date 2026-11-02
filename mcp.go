@@ -496,10 +496,7 @@ func (c *mcpClient) readLoop(r io.Reader) {
 	if err == nil {
 		err = waitErr
 	}
-	if err == nil {
-		err = errors.New("it closed its output")
-	}
-	c.fail(fmt.Errorf("the %s MCP server stopped: %v", c.cfg.Name, err))
+	c.fail(fmt.Errorf("the %s MCP server stopped: %s", c.cfg.Name, exitReason(err)))
 }
 
 // fail records why the server is unusable and releases every caller waiting on
@@ -546,6 +543,44 @@ func (c *mcpClient) stop() {
 		c.cmd.Process.Kill()
 	}
 	c.fail(errors.New("this MCP server was shut down"))
+}
+
+// dead reports why the server is unusable, or nil while it is still running.
+// Every caller that finds a non-nil error here is looking at a process that is
+// already gone, so the answer needs no extra locking of its own.
+func (c *mcpClient) dead() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.closed
+}
+
+// pid is the process the OS handed back, for the status report. Zero when the
+// server never started.
+func (c *mcpClient) pid() int {
+	if c.cmd == nil || c.cmd.Process == nil {
+		return 0
+	}
+	return c.cmd.Process.Pid
+}
+
+// exitReason says why a server process is gone, in words that do not hide the
+// one case the exit code cannot tell apart: a process ended by something
+// outside this agent reports an ordinary exit code and prints nothing, which is
+// also what a crash with no message looks like. Either way the server is
+// started again by the next call, so the wording has to be a fact and not a
+// guess about who did it.
+func exitReason(waitErr error) string {
+	var ee *exec.ExitError
+	if errors.As(waitErr, &ee) {
+		if code := ee.ExitCode(); code >= 0 {
+			return fmt.Sprintf("it exited with code %d (a process stopped from outside reports an ordinary code too, and prints nothing)", code)
+		}
+		return "it was killed by a signal, so it has no exit code of its own"
+	}
+	if waitErr != nil {
+		return waitErr.Error()
+	}
+	return "it closed its output"
 }
 
 // callTool runs one tools/call and returns the flattened text of the answer.
@@ -733,8 +768,11 @@ type mcpStatus struct {
 	Command   string `json:"command"`
 	Connected bool   `json:"connected"`
 	Tools     int    `json:"tools"`
-	Disabled  bool   `json:"disabled,omitempty"`
-	Error     string `json:"error,omitempty"`
+	// PID is the process the agent started, so "stop" can be checked afterwards
+	// instead of trusted.
+	PID      int    `json:"pid,omitempty"`
+	Disabled bool   `json:"disabled,omitempty"`
+	Error    string `json:"error,omitempty"`
 }
 
 // mcpManager owns the server processes for one agent.
@@ -744,9 +782,19 @@ type mcpManager struct {
 	// twice.
 	refreshMu sync.Mutex
 
-	mu       sync.Mutex
-	sig      string
-	ready    bool
+	// reviveMu serialises restarts: two tool calls that both find the same dead
+	// server must not spawn two copies of it.
+	reviveMu sync.Mutex
+
+	mu    sync.Mutex
+	sig   string
+	ready bool
+	// list is the configuration the running catalogue was built from. It is what
+	// a server that dies is started again from, without the caller having to hold
+	// the configuration.
+	list     []MCPServerConfig
+	stopped  map[string]bool
+	revived  map[string]time.Time
 	clients  map[string]*mcpClient
 	wire     map[string]mcpTarget
 	toolset  []map[string]any
@@ -754,7 +802,12 @@ type mcpManager struct {
 }
 
 func newMCPManager() *mcpManager {
-	return &mcpManager{clients: map[string]*mcpClient{}, wire: map[string]mcpTarget{}}
+	return &mcpManager{
+		clients: map[string]*mcpClient{},
+		wire:    map[string]mcpTarget{},
+		stopped: map[string]bool{},
+		revived: map[string]time.Time{},
+	}
 }
 
 // signature is a cheap fingerprint of the configured list. Servers are started
@@ -800,6 +853,11 @@ func (m *mcpManager) refresh(ctx context.Context, list []MCPServerConfig, force 
 	m.wire = map[string]mcpTarget{}
 	m.toolset = nil
 	m.statuses = nil
+	m.list = append([]MCPServerConfig(nil), list...)
+	// Reloading is a fresh intent: a server that was stopped on purpose is
+	// wanted again, so the marks that keep it down are cleared here.
+	m.stopped = map[string]bool{}
+	m.revived = map[string]time.Time{}
 	m.sig = sig
 	m.ready = true
 	m.mu.Unlock()
@@ -841,6 +899,7 @@ func (m *mcpManager) refresh(ctx context.Context, list []MCPServerConfig, force 
 		clients[cfg.Name] = client
 		status.Connected = true
 		status.Tools = len(client.tools)
+		status.PID = client.pid()
 		statuses = append(statuses, status)
 
 		for i := range client.tools {
@@ -872,23 +931,282 @@ func (m *mcpManager) toolCount() int {
 	return len(m.toolset)
 }
 
+// status is the report the settings pane and mcp_control show. The entries are
+// the ones recorded when the servers were started, but each one is checked
+// against its process first: a server stopped from outside - killed by hand, or
+// taken down with the terminal it was started from - must not keep reading as
+// "connected, 14 tools" just because nothing asked it since. What the report
+// says is what is true now, which is the whole point of a status line.
 func (m *mcpManager) status() []mcpStatus {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	return append([]mcpStatus(nil), m.statuses...)
+	out := append([]mcpStatus(nil), m.statuses...)
+	clients := make(map[string]*mcpClient, len(m.clients))
+	for name, c := range m.clients {
+		clients[name] = c
+	}
+	m.mu.Unlock()
+
+	for i := range out {
+		c := clients[out[i].Name]
+		if c == nil {
+			if out[i].Connected {
+				out[i].Connected = false
+				out[i].Tools = 0
+				out[i].PID = 0
+				if out[i].Error == "" {
+					out[i].Error = "it is not running"
+				}
+			}
+			continue
+		}
+		if err := c.dead(); err != nil {
+			out[i].Connected = false
+			out[i].Tools = 0
+			out[i].PID = 0
+			out[i].Error = redact(err.Error())
+			continue
+		}
+		out[i].Connected = true
+		out[i].Tools = len(c.tools)
+		out[i].PID = c.pid()
+		out[i].Error = ""
+	}
+	return out
 }
 
 // callTool routes one call to the server that advertised it.
+//
+// A server that is gone - stopped from outside, crashed, killed by the OS - is
+// started again here, once, and the call is retried. That is the difference
+// between a stale process costing one task and costing the rest of the session:
+// the tool list in the request was built from a running server, and a run in
+// progress should not fail because somebody cleaned up a process between two
+// steps. A server stopped on purpose is not revived; the refusal says so and
+// names the way back.
 func (m *mcpManager) callTool(ctx context.Context, name, rawArgs string, poke func()) (string, error) {
 	m.mu.Lock()
 	target, known := m.wire[name]
 	client := m.clients[target.server]
 	m.mu.Unlock()
 
-	if !known || client == nil {
-		return "", fmt.Errorf("no MCP server is serving %q any more - the server list changed while this task was running, so nothing was sent. The built-in tools still work; tell the user to reload the MCP servers to get this one back.", name)
+	if !known {
+		return "", fmt.Errorf("no MCP server is serving %q any more: the server list changed, or the server that advertised it was stopped, while this task was running. Nothing was sent. mcp_control with action \"status\" says which servers are running, and action \"start\" brings one back.", name)
+	}
+	if client == nil || client.dead() != nil {
+		if err := m.revive(ctx, target.server); err != nil {
+			return "", fmt.Errorf("%q is not running and was not started again: %v", target.server, err)
+		}
+		m.mu.Lock()
+		client = m.clients[target.server]
+		m.mu.Unlock()
+		if client == nil {
+			return "", fmt.Errorf("%q is not running, and nothing was sent. mcp_control with action \"start\" and name %q is how it comes back.", target.server, target.server)
+		}
 	}
 	return client.callTool(ctx, target.tool, rawArgs, poke)
+}
+
+// mcpReviveGap is how long a server that just failed to come back is left
+// alone. Without it, a server that cannot start would be spawned once per tool
+// call for the rest of the task - the opposite of recovering.
+const mcpReviveGap = 15 * time.Second
+
+// setStatus replaces one entry of the status list, adding it if the list has no
+// entry for that server yet.
+func (m *mcpManager) setStatus(name string, update func(*mcpStatus)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.statuses {
+		if m.statuses[i].Name == name {
+			update(&m.statuses[i])
+			return
+		}
+	}
+	entry := mcpStatus{Name: name}
+	for _, cfg := range m.list {
+		if cfg.Name == name {
+			entry.Command = cfg.commandLine()
+			break
+		}
+	}
+	update(&entry)
+	m.statuses = append(m.statuses, entry)
+}
+
+// rebuildLocked recomputes the tool list and the routing table from the servers
+// that are running. The names come out exactly as refresh produced them, in the
+// same configured order, which is what lets a call that was already routed by
+// name keep landing after a server came back.
+func (m *mcpManager) rebuildLocked() {
+	m.wire = map[string]mcpTarget{}
+	var schemas []map[string]any
+	for _, cfg := range m.list {
+		client := m.clients[cfg.Name]
+		if client == nil {
+			continue
+		}
+		for i := range client.tools {
+			tool := &client.tools[i]
+			tool.wire = wireName(cfg.Name, tool.Name, m.wire)
+			m.wire[tool.wire] = mcpTarget{server: cfg.Name, tool: tool.Name}
+			schemas = append(schemas, mcpToolSchema(cfg.Name, *tool))
+		}
+	}
+	m.toolset = schemas
+}
+
+// revive starts one configured server again after it stopped. It is a no-op for
+// a server that is still running, it refuses a server that was stopped on
+// purpose, and it refuses to retry one that failed a moment ago.
+func (m *mcpManager) revive(ctx context.Context, name string) error {
+	m.reviveMu.Lock()
+	defer m.reviveMu.Unlock()
+
+	m.mu.Lock()
+	if m.stopped[name] {
+		m.mu.Unlock()
+		return errors.New("it was stopped on purpose - mcp_control with action \"start\" is how it is brought back")
+	}
+	if c := m.clients[name]; c != nil && c.dead() == nil {
+		m.mu.Unlock()
+		return nil
+	}
+	if at, ok := m.revived[name]; ok && time.Since(at) < mcpReviveGap {
+		m.mu.Unlock()
+		return fmt.Errorf("it stopped again less than %s ago, so it is not started again yet - check its stderr and the command line in the status", mcpReviveGap)
+	}
+	m.revived[name] = time.Now()
+	var cfg MCPServerConfig
+	found := false
+	for _, candidate := range m.list {
+		if candidate.Name == name {
+			cfg, found = candidate, true
+			break
+		}
+	}
+	dead := m.clients[name]
+	m.mu.Unlock()
+
+	if !found {
+		return fmt.Errorf("there is no server called %q in the configuration any more", name)
+	}
+	// Releasing the dead process first is what keeps a server that crashes on
+	// start from leaving one copy behind on every attempt.
+	if dead != nil {
+		dead.stop()
+	}
+
+	client, err := startMCPClient(ctx, cfg)
+	if err != nil {
+		reason := redact(err.Error())
+		m.setStatus(name, func(s *mcpStatus) {
+			s.Connected = false
+			s.Tools = 0
+			s.PID = 0
+			s.Error = reason
+		})
+		return err
+	}
+
+	m.mu.Lock()
+	if m.clients == nil {
+		m.clients = map[string]*mcpClient{}
+	}
+	m.clients[name] = client
+	m.rebuildLocked()
+	m.mu.Unlock()
+
+	m.setStatus(name, func(s *mcpStatus) {
+		s.Connected = true
+		s.Tools = len(client.tools)
+		s.PID = client.pid()
+		s.Error = ""
+	})
+	return nil
+}
+
+// stopServer shuts one server down and leaves it down. stdin is closed first,
+// which is how an MCP server is supposed to notice it is done; the process is
+// killed only if it ignores that. The mark it leaves is what makes this a real
+// stop: the automatic restart that a crashed server gets skips it.
+func (m *mcpManager) stopServer(name string) error {
+	m.mu.Lock()
+	client := m.clients[name]
+	configured := false
+	for _, cfg := range m.list {
+		if cfg.Name == name {
+			configured = true
+			break
+		}
+	}
+	if !configured && client == nil {
+		known := m.namesLocked()
+		m.mu.Unlock()
+		return fmt.Errorf("there is no MCP server called %q (configured: %s)", name, known)
+	}
+	if m.stopped == nil {
+		m.stopped = map[string]bool{}
+	}
+	m.stopped[name] = true
+	delete(m.clients, name)
+	m.rebuildLocked()
+	m.mu.Unlock()
+
+	if client != nil {
+		client.stop()
+	}
+	m.setStatus(name, func(s *mcpStatus) {
+		s.Connected = false
+		s.Tools = 0
+		s.PID = 0
+		s.Error = "stopped on request"
+	})
+	return nil
+}
+
+// startServer brings a stopped or dead server back. A deliberate start is not
+// subject to the cooldown the automatic restart uses.
+func (m *mcpManager) startServer(ctx context.Context, name string) error {
+	m.mu.Lock()
+	delete(m.stopped, name)
+	if m.revived == nil {
+		m.revived = map[string]time.Time{}
+	}
+	delete(m.revived, name)
+	m.mu.Unlock()
+	return m.revive(ctx, name)
+}
+
+// restartServer is a stop followed by a start: stopping first is what guarantees
+// the new process is not a second copy of one that was still running.
+func (m *mcpManager) restartServer(ctx context.Context, name string) error {
+	if err := m.stopServer(name); err != nil {
+		return err
+	}
+	return m.startServer(ctx, name)
+}
+
+// namesLocked lists the configured servers, for an error message.
+func (m *mcpManager) namesLocked() string {
+	var names []string
+	for _, cfg := range m.list {
+		names = append(names, cfg.Name)
+	}
+	if len(names) == 0 {
+		return "none"
+	}
+	return strings.Join(names, ", ")
+}
+
+// names is the configured list, for a caller that has to tell "all" from one.
+func (m *mcpManager) names() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var names []string
+	for _, cfg := range m.list {
+		names = append(names, cfg.Name)
+	}
+	return names
 }
 
 // close shuts every server down. Called when the agent goes away; the process
@@ -899,6 +1217,9 @@ func (m *mcpManager) close() {
 	m.clients = map[string]*mcpClient{}
 	m.wire = map[string]mcpTarget{}
 	m.toolset = nil
+	// Nothing may be started again while this is shutting down.
+	m.list = nil
+	m.stopped = map[string]bool{}
 	m.mu.Unlock()
 
 	for _, c := range clients {

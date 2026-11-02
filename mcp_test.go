@@ -564,3 +564,214 @@ func TestMCPManagerCloseStopsEveryServer(t *testing.T) {
 		t.Error("a call after close was accepted")
 	}
 }
+
+// waitGone waits until the client has noticed that its process is gone, so a
+// test that kills a server does not race the reader that reports it.
+func waitGone(t *testing.T, c *mcpClient) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if c.dead() != nil {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("the client never noticed that its server was gone")
+}
+
+// A server that is gone is started again by the next call that needs it. This is
+// the case that made a killed SparrowMCP look like a broken handshake: the
+// handshake had worked, but nothing ever started the process again, so every
+// later call repeated the same exit status until the agent itself restarted.
+func TestMCPDeadServerIsStartedAgainByTheNextCall(t *testing.T) {
+	m := newMCPManager()
+	t.Cleanup(m.close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cfg := helperServerConfig(t)
+	m.refresh(ctx, []MCPServerConfig{cfg}, false)
+
+	m.mu.Lock()
+	client := m.clients[cfg.Name]
+	m.mu.Unlock()
+	if client == nil {
+		t.Fatal("the helper server did not start")
+	}
+	before := client.pid()
+
+	if err := client.cmd.Process.Kill(); err != nil {
+		t.Fatalf("could not stop the helper server: %v", err)
+	}
+	waitGone(t, client)
+
+	out, err := m.callTool(ctx, "mcp__fake__echo", `{"text":"after a restart"}`, nil)
+	if err != nil {
+		t.Fatalf("the call after the server died was not recovered: %v", err)
+	}
+	if !strings.Contains(out, "echo: after a restart") {
+		t.Fatalf("the revived server did not answer the call: %q", out)
+	}
+
+	m.mu.Lock()
+	replacement := m.clients[cfg.Name]
+	m.mu.Unlock()
+	if replacement == nil {
+		t.Fatal("no server is registered after the revive")
+	}
+	if replacement.pid() == before {
+		t.Error("the old process id is still in the table, so nothing was started again")
+	}
+	if m.toolCount() == 0 {
+		t.Error("the revived server's tools are not offered again")
+	}
+}
+
+// Stop means stop. The server goes, its tools leave the tool list, the status
+// says it was stopped rather than crashed, a call that needs it is refused
+// instead of restarting it, and only an explicit start brings it back. A stop
+// that the next call silently undoes is worse than no stop: the user would
+// believe a process was gone while it was still running.
+func TestMCPStopIsRealAndStaysStopped(t *testing.T) {
+	m := newMCPManager()
+	t.Cleanup(m.close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cfg := helperServerConfig(t)
+	m.refresh(ctx, []MCPServerConfig{cfg}, false)
+
+	m.mu.Lock()
+	client := m.clients[cfg.Name]
+	m.mu.Unlock()
+	if client == nil {
+		t.Fatal("the helper server did not start")
+	}
+	pid := client.pid()
+
+	if err := m.stopServer(cfg.Name); err != nil {
+		t.Fatalf("stop failed: %v", err)
+	}
+	waitGone(t, client)
+	if n := m.toolCount(); n != 0 {
+		t.Errorf("%d tools are still offered after the stop", n)
+	}
+	var status mcpStatus
+	for _, s := range m.status() {
+		if s.Name == cfg.Name {
+			status = s
+		}
+	}
+	if status.Connected || status.PID != 0 {
+		t.Errorf("the status still reports it as running: %+v", status)
+	}
+	if !strings.Contains(status.Error, "stopped") {
+		t.Errorf("the status does not say it was stopped: %+v", status)
+	}
+
+	if _, err := m.callTool(ctx, "mcp__fake__echo", `{"text":"x"}`, nil); err == nil {
+		t.Fatal("a call to a stopped server was accepted")
+	} else if !strings.Contains(err.Error(), "stopped") {
+		t.Errorf("the refusal does not explain that the server was stopped: %v", err)
+	}
+
+	if err := m.startServer(ctx, cfg.Name); err != nil {
+		t.Fatalf("start failed: %v", err)
+	}
+	m.mu.Lock()
+	revived := m.clients[cfg.Name]
+	m.mu.Unlock()
+	if revived == nil {
+		t.Fatal("start did not register a server")
+	}
+	if revived.pid() == pid {
+		t.Error("start reused the stopped process instead of running a new one")
+	}
+	out, err := m.callTool(ctx, "mcp__fake__echo", `{"text":"back"}`, nil)
+	if err != nil || !strings.Contains(out, "echo: back") {
+		t.Fatalf("the restarted server did not answer: %q %v", out, err)
+	}
+}
+
+// The tool the agent uses for all of this has to reach the same code the
+// settings endpoint reaches: status, stop, start, and the tool list that follows
+// from them.
+func TestMCPControlToolStopsAndStartsAServer(t *testing.T) {
+	cfg := &Config{AutoApprove: true}
+	ag := NewAgent(cfg)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	ag.mcp.refresh(ctx, []MCPServerConfig{helperServerConfig(t)}, false)
+	t.Cleanup(ag.mcp.close)
+
+	call := func(args string) string {
+		tc := ToolCall{ID: "mcp_control", Type: "function"}
+		tc.Function.Name = "mcp_control"
+		tc.Function.Arguments = args
+		return ag.execTool(ctx, t.TempDir(), tc, ModeAgent, func(string, string) {})
+	}
+
+	if out := call(`{"action":"status"}`); !strings.Contains(out, "running (pid ") {
+		t.Fatalf("status does not report the running server: %q", out)
+	}
+	if out := call(`{"action":"stop","name":"fake"}`); strings.Contains(out, "running (pid ") {
+		t.Fatalf("the server is still reported as running after a stop: %q", out)
+	} else if !strings.Contains(out, "stopped") {
+		t.Fatalf("the stop is not visible in the report: %q", out)
+	}
+	if out := call(`{"action":"start","name":"fake"}`); !strings.Contains(out, "running (pid ") {
+		t.Fatalf("the server did not come back: %q", out)
+	}
+	if out := call(`{"action":"wobble"}`); !strings.HasPrefix(out, "ERROR:") {
+		t.Fatalf("an unknown action was not refused: %q", out)
+	}
+}
+
+// The report has to answer for the process that is running now, not for the one
+// that was running when the list was built. A server killed from outside used to
+// keep reading as "connected, N tools" until something asked it something, which
+// is the state the settings pane was showing while every call failed.
+func TestMCPStatusNoticesAServerKilledFromOutside(t *testing.T) {
+	m := newMCPManager()
+	t.Cleanup(m.close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cfg := helperServerConfig(t)
+	m.refresh(ctx, []MCPServerConfig{cfg}, false)
+
+	m.mu.Lock()
+	client := m.clients[cfg.Name]
+	m.mu.Unlock()
+	if client == nil {
+		t.Fatal("the helper server did not start")
+	}
+
+	status := func() mcpStatus {
+		t.Helper()
+		for _, s := range m.status() {
+			if s.Name == cfg.Name {
+				return s
+			}
+		}
+		t.Fatalf("the server %q is missing from the report", cfg.Name)
+		return mcpStatus{}
+	}
+
+	if s := status(); !s.Connected || s.PID == 0 {
+		t.Fatalf("a running server is not reported as running: %+v", s)
+	}
+
+	if err := client.cmd.Process.Kill(); err != nil {
+		t.Fatalf("could not stop the helper server: %v", err)
+	}
+	waitGone(t, client)
+
+	s := status()
+	if s.Connected || s.Tools != 0 || s.PID != 0 {
+		t.Fatalf("a killed server is still reported as running: %+v", s)
+	}
+	if s.Error == "" {
+		t.Error("the report does not say why the server is gone")
+	}
+}

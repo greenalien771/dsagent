@@ -218,6 +218,17 @@ func classifyTool(name, rawArgs string) Risk {
 		}
 		return Risk{Level: riskElevated, Reasons: []string{"changes the state of the window " + strconv.Quote(str("window")) + " on the user's desktop"}}
 
+	case "mcp_control":
+		// Reading the state of a server is free; starting or stopping one is
+		// not, and stopping the wrong one takes a tool away mid-task.
+		act := strings.ToLower(strings.TrimSpace(str("action")))
+		if act == "" || act == "status" {
+			return Risk{Level: riskSafe}
+		}
+		return Risk{Level: riskElevated, Reasons: []string{
+			"starts or stops an MCP server: a third-party process, outside this workspace",
+		}}
+
 	case "list_windows":
 		// No side effect, but the result is a list of everything the user has
 		// open - document names, URLs, message previews - and it goes to the
@@ -255,7 +266,10 @@ func classifyTool(name, rawArgs string) Risk {
 // is fine, one to this machine is not; a window listing is a disclosure of the
 // desktop, so it joins the same gate.
 func promptsOnRisk(name string) bool {
-	return name == "web_fetch" || name == "list_windows"
+	// mcp_control is here because only some of its actions change anything:
+	// status is free, while a stop or a start runs or ends a third-party process
+	// and is shown before it happens.
+	return name == "web_fetch" || name == "list_windows" || name == "mcp_control"
 }
 
 // neverAuto reports a call that "Always Allow" must not answer even though the

@@ -380,12 +380,18 @@ func (a *Agent) handleStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleMCP reports the configured MCP servers, and POST starts them again.
+// handleMCP reports the configured MCP servers, and POST acts on them.
 //
 // The status is what the settings pane shows next to the list: which entries are
-// running, how many tools each advertises, and the sentence that says why one is
-// not. POST is the "Reload servers" button - it is how a config.json edit, or a
-// server that died, is picked up without restarting the agent.
+// running, how many tools each advertises, the process id, and the sentence that
+// says why one is not. POST is the "Reload servers" button when it carries no
+// body - which is how a config.json edit is picked up without restarting the
+// agent - and a stop, start or restart of one server (or all of them) when it
+// does: {"action":"stop","name":"sparrow"}, where name may be empty or "all".
+//
+// Stopping here is the same stop the agent has in its own tool list: stdin is
+// closed so the server notices, the process is killed only if it ignores that,
+// and it stays down until it is started again.
 func (a *Agent) handleMCP(w http.ResponseWriter, r *http.Request) {
 	servers := a.cfg.mcpServers()
 
@@ -393,9 +399,22 @@ func (a *Agent) handleMCP(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet, http.MethodHead:
 		writeJSON(w, http.StatusOK, a.mcpReport(servers))
 	case http.MethodPost:
+		var req struct {
+			Action string `json:"action"`
+			Name   string `json:"name"`
+		}
+		// An empty body is the plain reload the button sends, so a decode error
+		// that is only EOF is not a failure.
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+			return
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
-		a.mcp.refresh(ctx, servers, true)
+		if err := a.mcpAct(ctx, req.Action, req.Name, servers); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": redact(err.Error()), "servers": a.mcp.status()})
+			return
+		}
 		writeJSON(w, http.StatusOK, a.mcpReport(servers))
 	default:
 		w.Header().Set("Allow", "GET, POST")
@@ -1362,7 +1381,132 @@ func (a *Agent) execTool(ctx context.Context, root string, tc ToolCall, mode str
 		return redact(out)
 	}
 
+	// mcp_control is built in, not advertised by a server: it is how this agent
+	// answers "is that server still running" and how it stops one properly. A
+	// kill by image name would take out every copy of it and leave nothing that
+	// says whether it worked.
+	if tc.Function.Name == "mcp_control" {
+		return redact(a.mcpControl(ctx, tc.Function.Arguments))
+	}
+
 	return redact(runTool(ctx, root, tc, limit, a.touch))
+}
+
+// mcpAct performs one MCP action, so the settings endpoint and the tool go
+// through exactly the same path. An empty action is a full reload, which is what
+// the "Reload servers" button sends.
+func (a *Agent) mcpAct(ctx context.Context, action, name string, servers []MCPServerConfig) error {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "", "reload", "refresh":
+		a.mcp.refresh(ctx, servers, true)
+		return nil
+	case "status":
+		return nil
+	case "stop", "start", "restart":
+	default:
+		return fmt.Errorf("unknown action %q: use reload, status, stop, start or restart", action)
+	}
+
+	verb := strings.ToLower(strings.TrimSpace(action))
+	// The manager knows which servers were actually started, which is the set an
+	// action can name; the configuration is the fallback before the first load.
+	known := a.mcp.names()
+	if len(known) == 0 {
+		for _, s := range servers {
+			if !s.Disabled {
+				known = append(known, s.Name)
+			}
+		}
+	}
+	targets, err := mcpTargets(name, known)
+	if err != nil {
+		return err
+	}
+	var problems []string
+	for _, target := range targets {
+		var failure error
+		switch verb {
+		case "stop":
+			failure = a.mcp.stopServer(target)
+		case "start":
+			failure = a.mcp.startServer(ctx, target)
+		case "restart":
+			failure = a.mcp.restartServer(ctx, target)
+		}
+		if failure != nil {
+			problems = append(problems, target+": "+failure.Error())
+		}
+	}
+	if len(problems) > 0 {
+		return errors.New(strings.Join(problems, "; "))
+	}
+	return nil
+}
+
+// mcpTargets resolves the name an action names: one server, or every known one
+// when the name is empty or "all".
+func mcpTargets(name string, known []string) ([]string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" || strings.EqualFold(name, "all") {
+		if len(known) == 0 {
+			return nil, errors.New("no MCP server is configured, so there is nothing to act on")
+		}
+		return known, nil
+	}
+	for _, candidate := range known {
+		if strings.EqualFold(candidate, name) {
+			return []string{candidate}, nil
+		}
+	}
+	if len(known) == 0 {
+		return nil, fmt.Errorf("there is no MCP server called %q, and none is configured", name)
+	}
+	return nil, fmt.Errorf("there is no MCP server called %q; configured: %s", name, strings.Join(known, ", "))
+}
+
+// mcpControl is the tool behind "is that server running" and "how do I stop it
+// properly". A stop made here is a stop: the server is asked to leave through
+// its stdin, killed only if it ignores that, and the automatic restart that a
+// crashed server gets does not apply to it.
+func (a *Agent) mcpControl(ctx context.Context, rawArgs string) string {
+	var args struct {
+		Action string `json:"action"`
+		Name   string `json:"name"`
+	}
+	if err := json.Unmarshal([]byte(rawArgs), &args); err != nil {
+		return "BAD ARGS: " + err.Error() + " - mcp_control takes an action (status, stop, start, restart) and an optional server name"
+	}
+	if err := a.mcpAct(ctx, args.Action, args.Name, a.cfg.mcpServers()); err != nil {
+		return "ERROR: " + redact(err.Error())
+	}
+	return a.mcpStatusText()
+}
+
+// mcpStatusText is the report mcp_control and the status action answer with. The
+// process id is in it because that is what makes a stop checkable instead of
+// something the transcript merely claims.
+func (a *Agent) mcpStatusText() string {
+	statuses := a.mcp.status()
+	if len(statuses) == 0 {
+		return "No MCP server has been started: either none is configured, or the servers were stopped before they were loaded."
+	}
+	var b strings.Builder
+	for _, s := range statuses {
+		b.WriteString(s.Name)
+		switch {
+		case s.Disabled:
+			b.WriteString(" - disabled in the configuration, so it was never started")
+		case s.Connected:
+			b.WriteString(fmt.Sprintf(" - running (pid %d), %d tool(s)", s.PID, s.Tools))
+		case s.Error != "":
+			b.WriteString(" - not running: " + s.Error)
+		default:
+			b.WriteString(" - not running")
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString(fmt.Sprintf("%d MCP tool(s) are in the current tool list.", a.mcp.toolCount()))
+	return b.String()
 }
 
 func (a *Agent) handleApprove(w http.ResponseWriter, r *http.Request) {
@@ -1449,6 +1593,9 @@ func modeDenies(mode, tool string) (string, bool) {
 
 	switch mode {
 	case ModePlan:
+		if tool == "mcp_control" {
+			return "DENIED by plan mode: this session is read-only, and starting or stopping a server is a change. Name the server and the action in your plan instead; the user switches to Agent mode to run it.", true
+		}
 		if tool == "write_file" {
 			return "DENIED by plan mode: this session is read-only. Describe the change in your plan instead; the user switches to Agent mode to apply it.", true
 		}
@@ -1456,6 +1603,9 @@ func modeDenies(mode, tool string) (string, bool) {
 			return "DENIED by plan mode: this session is read-only, and moving or closing a window is a change. Describe what you would do instead; the user switches to Agent mode to apply it.", true
 		}
 	case ModeAsk:
+		if tool == "mcp_control" {
+			return "DENIED by ask mode: this session only answers questions. State which server you would start or stop and why, then stop.", true
+		}
 		if tool == "window_control" {
 			return "DENIED by ask mode: this session only answers questions. State which window you would act on and why, then stop.", true
 		}
