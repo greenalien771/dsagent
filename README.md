@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/Go-1.21%2B-blue" alt="Go 1.21+">
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License: MIT">
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey" alt="Platform: Windows | macOS | Linux">
-  <img src="https://img.shields.io/badge/tools-9-blue" alt="9 tools">
+  <img src="https://img.shields.io/badge/tools-12-blue" alt="12 tools">
 </p>
 
 A coding agent in one Go binary. It serves its own UI on loopback, talks to an
@@ -18,7 +18,10 @@ OpenAI-compatible `/chat/completions` endpoint - DeepSeek by default, with Qwen
 fetch, screenshot, window control, plus the tools of any MCP server you
 configure - inside a working directory you choose.
 Mutating calls stop at an approval card before they run, and a call classified
-dangerous needs the confirmation word typed into that card.
+dangerous needs the confirmation word typed into that card. A task ends with the
+`done` tool, which stops the run and puts "Task finished" and the agent's own
+summary in the transcript; shell commands raise a Windows notification, either
+for every command or only the dangerous ones.
 
 No telemetry, no hosted backend, no CDN. The UI, its vendored JavaScript and the
 agent loop are all inside the executable.
@@ -117,6 +120,8 @@ Stored in `config.json` under the OS config directory:
 | `workdir` | directory dsagent was first started in | sandbox root for every tool |
 | `max_steps` | `25` | tool-call budget per task (form allows up to 200) |
 | `auto_approve` | `false` | skip approval cards for non-dangerous calls |
+| `notify_any` | `false` | Windows notification for every `run_shell` command |
+| `notify_danger` | `true` | Windows notification for dangerous commands only |
 | `idle_timeout_sec` | `120` | no-output watchdog, 10-1800 seconds |
 | `run_timeout_min` | `25` | wall-clock cap per task, 1-240 minutes |
 | `shell_timeout_sec` | `60` | cap on one `run_shell` command, 5-3600 seconds |
@@ -300,6 +305,13 @@ service. They are also the parts worth reading before you trust it:
   downloading into a shell, `git push --force`, credential access and similar.
   Those need the confirmation word typed into the card, and the server verifies
   it.
+- **Command notifications.** Every `run_shell` call raises a Windows toast from
+  dsagent itself, not from the page, so it arrives while the window is behind
+  something else or minimised. Two switches in Settings > Safety pick what is
+  announced - any command, or only the ones the risk layer calls dangerous, with
+  the reason it flagged them - and both are in `config.json`
+  (`notify_any`, `notify_danger`) because the process that shows the toast is the
+  server. Only the command line and the reasons are shown, never the output.
 - **Path sandbox.** Every tool path is resolved through symlinks and NTFS
   junctions before use, so a link inside the workspace cannot walk a read or a
   write outside it.
@@ -364,6 +376,7 @@ it.
 | `vision.go` | image validation, inline limits, attaching a capture to the conversation |
 | `screenshot.go` | the desktop capture path and its temporary-file sweep |
 | `window.go`, `window.ps1` | window enumeration, per-window capture, control and waits |
+| `notify_windows.go`, `notify_other.go` | the Windows toast raised for a shell command |
 | `shell_windows.go`, `shell_other.go` | how one shell line is handed to cmd.exe or /bin/sh |
 | `secret_windows.go`, `secret_other.go` | key sealing per platform |
 | `ui/index.html` | the whole front end, no build step |

@@ -74,6 +74,15 @@ func toolSchemas(mode string) []map[string]any {
 			"window": map[string]any{"type": "string", "description": "title substring or hwnd from list_windows: capture just that window, even if it is minimized or behind others, without the user opening or focusing it. x/y then offset inside the window"}}, nil),
 	}
 
+	// done is how a run ends on purpose. Without it the only ending is the model
+	// answering with no tool calls, which is the same shape as "I stopped here":
+	// neither the UI nor the user can tell a finished task from a run that gave
+	// up. It is offered in every mode because a plan or an answer is finished
+	// too, and it writes nothing.
+	tools = append(tools,
+		fn("done", `End the task because it is finished. Call this once the work is complete and verified: it stops the run, and the UI shows "Task finished" with your summary. Do not call it while anything is left to do, and do not use it to report a failure - a task that is blocked is described in your normal answer. In plan or ask mode it marks the plan or answer as complete; nothing on disk has been changed.`, map[string]any{
+			"summary": map[string]any{"type": "string", "description": "one or two sentences: what changed (which files), and how it was verified. This is what the user reads under \"Task finished\"."}}, []string{"summary"}))
+
 	// Mutating tools: agent always, plan never, ask never.
 	if mode != ModePlan && mode != ModeAsk {
 		tools = append(tools,
@@ -407,6 +416,12 @@ func runTool(ctx context.Context, root string, tc ToolCall, shellLimit time.Dura
 
 	case "window_control":
 		return windowControlTool(ctx, tc.Function.Arguments)
+
+	case "done":
+		// The run loop ends the task when it sees this name. The text below is
+		// what the transcript records for the call, so the model and the
+		// transcript see the same ending.
+		return "OK: the task is marked finished. The run ends here, so no further tool call will execute in this task."
 
 	case "wait":
 		return waitTool(ctx, tc.Function.Arguments, poke)

@@ -258,6 +258,7 @@
     .thread > .tool-card::after,
     .thread > .sys-line::after,
     .thread > .err-card::after,
+    .thread > .fin-card::after,
     .thread > .approval::after,
     .thread > .plan-actions::after,
     .thread > .live-row::after {
@@ -274,6 +275,7 @@
     .thread > .tool-card[data-state="error"]::after { border-color: var(--danger); }
     .thread > .approval::after { border-color: var(--warn); }
     .thread > .err-card::after { border-color: var(--danger); }
+    .thread > .fin-card::after { border-color: var(--success); }
 
     /* --- live status row ------------------------------------------------
        The newest step of a run is a row at the bottom of the thread: what is
@@ -394,6 +396,17 @@
       font-size: 12.5px; color: var(--danger-text); white-space: pre-wrap; word-break: break-word;
     }
     .err-card svg { width: 14px; height: 14px; color: var(--danger); flex-shrink: 0; margin-top: 1px; }
+    /* The finish marker: the one card that says a run ended because the work
+       was done, rather than because it ran out of steps or was stopped. */
+    .fin-card {
+      display: flex; gap: 9px; padding: 10px 12px; border-radius: var(--radius);
+      background: var(--success-soft); border: 1px solid rgba(111, 155, 128, .26);
+      font-size: 12.5px; color: var(--success-text); word-break: break-word;
+    }
+    .fin-card svg { width: 14px; height: 14px; color: var(--success); flex-shrink: 0; margin-top: 1px; }
+    .fin-card .fbody { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+    .fin-card .ftitle { font-weight: 600; }
+    .fin-card .fsum { color: var(--text-2); white-space: pre-wrap; }
 
     /* tool cards: flat rows, one hairline, no nesting */
     /* No overflow:hidden here: the rail line and the node dot are drawn by
@@ -1432,6 +1445,26 @@
           </div>
 
           <div class="sw-card">
+            <h5><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.7 21a2 2 0 0 1-3.4 0"></path></svg> Command notifications</h5>
+            <p>dsagent shows a Windows notification when it runs a shell command, so a long task cannot touch this machine while you are looking at something else. The two switches are one choice: turning one on turns the other off, and both off means the agent runs without a word. They apply the moment you click them - no Save - because the next command may run in a second.</p>
+            <div class="perm-row">
+              <input type="checkbox" id="cfg-notify-any" onchange="setNotifySwitch('any', this.checked)">
+              <div>
+                <label class="perm-label" for="cfg-notify-any">Any command</label>
+                <div class="pref-hint">Every <code>run_shell</code> call, whatever it does, with the command line in the notification.</div>
+              </div>
+            </div>
+            <div class="perm-row">
+              <input type="checkbox" id="cfg-notify-danger" onchange="setNotifySwitch('danger', this.checked)">
+              <div>
+                <label class="perm-label" for="cfg-notify-danger">Dangerous command only</label>
+                <div class="pref-hint">Only the commands the risk layer flags as dangerous - recursive deletes, disk, registry and account operations, privilege escalation, force-pushes - with the reason it flagged them.</div>
+              </div>
+            </div>
+            <div class="pref-hint" style="margin-top:8px">The notification is a Windows toast from dsagent itself, not a message inside this page, so it appears even when the window is minimised. The same command also produces a short line in the transcript.</div>
+          </div>
+
+          <div class="sw-card">
             <h5><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l7 3v6c0 4.2-2.9 7.6-7 9-4.1-1.4-7-4.8-7-9V6z"></path><path d="M9 12l2 2 4-4"></path></svg> Stuck-run protection</h5>
             <p>Repeating the exact same tool call four times is refused, not retried. A silent run is cancelled by the watchdog, and closing the tab cancels the run instead of leaving it burning steps.</p>
           </div>
@@ -1810,7 +1843,11 @@ function toolIcon(name) {
 const ICONS = {
   warn: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>',
   error: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>',
-  info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"></circle><line x1="12" y1="11" x2="12" y2="16"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>'
+  info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"></circle><line x1="12" y1="11" x2="12" y2="16"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>',
+  // A command notification and the finish marker. Both live here so the DOM
+  // builders below carry no inline SVG of their own.
+  bell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.7 21a2 2 0 0 1-3.4 0"></path></svg>',
+  check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"></circle><path d="M8 12.5l2.6 2.6L16 9.8"></path></svg>'
 };
 
 function toast(msg, kind) {
@@ -2110,7 +2147,7 @@ function renderRecent() {
 // behind as unreachable storage.
 const CHATS_KEY = 'dsagent.chats.v1';
 const CHAT_LIMITS = { sessions: 20, records: 400, text: 40000, args: 4000, tool: 8000 };
-const CHAT_KINDS = { user: 1, agent: 1, sys: 1, err: 1, tool: 1 };
+const CHAT_KINDS = { user: 1, agent: 1, sys: 1, err: 1, tool: 1, fin: 1 };
 
 let chatSaveTimer = null;
 
@@ -2288,6 +2325,8 @@ function replaySession(sess, stored) {
       addSysLine(sess, rec.t);
     } else if (rec.k === 'err') {
       addErrorCard(sess, rec.t);
+    } else if (rec.k === 'fin') {
+      addFinishCard(sess, rec.t);
     } else if (rec.k === 'tool') {
       const card = addToolCard(sess, rec.n, rec.a);
       if (rec.r != null) {
@@ -2645,6 +2684,50 @@ function addErrorCard(sess, text, host) {
   logRecord(sess, { k: 'err', t: body });
   scrollToBottom();
   return card;
+}
+
+// addFinishCard is the "Task finished" marker. A run ends in several ways and
+// the transcript already says which for the bad ones (error card, abort line);
+// this is the good one, and it carries the summary the model wrote when it
+// called done.
+function addFinishCard(sess, summary) {
+  clearHero(sess);
+  const text = String(summary == null ? '' : summary).trim();
+  const card = document.createElement('div');
+  card.className = 'fin-card';
+  card.innerHTML = ICONS.check + '<div class="fbody"><span class="ftitle">Task finished</span></div>';
+  if (text) {
+    const sum = document.createElement('span');
+    sum.className = 'fsum';
+    sum.textContent = text;
+    card.querySelector('.fbody').append(sum);
+    logRecord(sess, { k: 'fin', t: text });
+  } else {
+    logRecord(sess, { k: 'fin', t: 'Task finished' });
+  }
+  sess.thread.append(card);
+  scrollToBottom();
+  return card;
+}
+
+// showCommandNote raises one command the agent is about to run. The server sends
+// every run_shell call with its risk level, and raises the Windows notification
+// itself; this is the copy that appears in the window so the transcript and the
+// desktop agree on what happened. Which commands are worth a word at all is the
+// switch in Settings > Safety - one rule (notifyAllowed) for both sides.
+function notifyAllowed(level) {
+  const c = state.config || {};
+  return !!c.notify_any || (!!c.notify_danger && level === 'dangerous');
+}
+
+function showCommandNote(note) {
+  const level = String(note.level || '');
+  if (!notifyAllowed(level)) return;
+  const danger = level === 'dangerous';
+  const cmd = String(note.command || '').trim() || '(empty command)';
+  const reasons = Array.isArray(note.reasons) ? note.reasons.filter((r) => typeof r === 'string' && r) : [];
+  const why = reasons.length ? ' - ' + reasons.join('; ') : '';
+  toast((danger ? 'Dangerous command: ' : 'Agent command: ') + cmd + why, danger ? 'warn' : '');
 }
 
 function prettyArgs(raw) {
@@ -3132,10 +3215,23 @@ async function streamTask(sess, task, images) {
           const outEl = lastCard && lastCard.querySelector('.tool-sec.result .out');
           if (outEl) setToolRecord(lastCard, outEl.textContent);
           failure = true;
+        } else if (ev.type === 'notify') {
+          // A command the agent is about to run, sent with its risk level. What
+          // reaches the user is decided by the switches in Settings > Safety.
+          let note = null;
+          try { note = JSON.parse(ev.text); } catch (e) { note = null; }
+          if (note && typeof note === 'object') showCommandNote(note);
         } else if (ev.type === 'done') {
           dropEmptyBubble();
           bubble = null;
           hideLive(sess);
+          // A done event that carries text is the agent calling done: the task
+          // ended because the work was finished, not because the run ran out of
+          // steps or was stopped, so the transcript marks it.
+          if (ev.text) {
+            addFinishCard(sess, ev.text);
+            toast('Task finished');
+          }
         } else if (ev.type === 'abort') {
           // The run was cancelled by the watchdog, a closed tab or the user.
           dropEmptyBubble();
@@ -3771,7 +3867,37 @@ function applyConfig(c) {
   setAutoBadge(!!c.auto_approve);
   paintWatchdog(c);
   paintMCP(c);
+  paintNotify(c);
   renderOnboarding();
+}
+
+// The two command-notification switches, painted from the server config they
+// live in: dsagent raises the Windows toast, so the setting cannot be a browser
+// preference - it has to apply even when no tab is open.
+function paintNotify(c) {
+  const any = $('#cfg-notify-any');
+  const danger = $('#cfg-notify-danger');
+  if (any) any.checked = !!(c && c.notify_any);
+  if (danger) danger.checked = !!(c && c.notify_danger);
+}
+
+// setNotifySwitch saves one switch immediately, because the next command may
+// run in seconds and a Save step would leave it unannounced. They are one
+// choice: turning either on turns the other off, and both off is silence.
+function setNotifySwitch(which, on) {
+  const body = {};
+  body[which === 'any' ? 'notify_any' : 'notify_danger'] = !!on;
+  if (on) body[which === 'any' ? 'notify_danger' : 'notify_any'] = false;
+  fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    .then((r) => r.json())
+    .then((c) => {
+      if (c && c.error) { toast(c.error, 'error'); return; }
+      applyConfig(c);
+      toast(c.notify_any ? 'Every command is announced' : c.notify_danger
+        ? 'Only dangerous commands are announced'
+        : 'Command notifications are off', c.notify_any || c.notify_danger ? 'info' : 'warn');
+    })
+    .catch(() => toast('Could not save the notification setting.', 'error'));
 }
 
 // Section switching for the settings window. The last section is remembered,

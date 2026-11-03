@@ -621,6 +621,9 @@ You can look at and drive other windows; the user does not have to open, focus o
    you did not run is a guess, and you must label it as one.
 5. Report the real result, with the exact commands you ran and what they returned.
 6. Stop when the task is done, and say clearly where anything unfinished or still running lives.
+7. End a finished task by calling done with a one- or two-sentence summary: what changed and how you
+   verified it. That call is what tells the user the task finished, so do not make it while work
+   remains, and do not use it to report a failure - say what is blocked in your normal answer.
 
 # Honesty
 - Never invent output, file contents, diffs, test results or line numbers.
@@ -854,6 +857,15 @@ func (a *Agent) run(ctx context.Context, task, mode string, images []imagePart, 
 			a.addToolResult(tc.ID, out)
 			// Send the result to the UI so the tool box can show it (was never emitted)
 			emit("tool_result", out)
+			// done is the model ending the task on purpose. The call is recorded
+			// like any other, the rest of the batch is closed out as not executed
+			// so the transcript stays valid for the API, and the run stops here
+			// with the summary instead of spending another turn.
+			if tc.Function.Name == "done" {
+				a.closeRemaining(msg.ToolCalls[i+1:], emit)
+				emit("done", finishedNote(tc.Function.Arguments))
+				return
+			}
 			// A tool that produced a picture hands it over here: image blocks are
 			// legal in a user message only, so it becomes one, one step after the
 			// tool call that asked for it.
@@ -1125,6 +1137,21 @@ func apiDetail(body []byte) string {
 	return oneLine(s)
 }
 
+// finishedNote is the sentence the UI prints under "Task finished". The model's
+// own summary is used when it wrote one, because that is the part the user
+// reads; the fallback exists so a done call with empty arguments still marks an
+// ending instead of looking like a run that simply went quiet.
+func finishedNote(rawArgs string) string {
+	var args struct {
+		Summary string `json:"summary"`
+	}
+	_ = json.Unmarshal([]byte(rawArgs), &args)
+	if s := strings.TrimSpace(args.Summary); s != "" {
+		return clipText(s, 600)
+	}
+	return "The agent reported the task finished."
+}
+
 // oneLine flattens a message onto one line and bounds its length, so an HTML
 // error page cannot turn into a paragraph in the transcript.
 func oneLine(s string) string {
@@ -1253,6 +1280,52 @@ func (a *Agent) parseStream(body io.Reader, emit func(string, string)) (Msg, err
 	return out, nil
 }
 
+// commandNote is the payload of a "notify" event: one command the agent is
+// about to run, with the risk the classifier gave it. It is JSON rather than a
+// finished sentence because the decision to show it belongs to the browser.
+type commandNote struct {
+	Tool    string   `json:"tool"`
+	Command string   `json:"command"`
+	Level   string   `json:"level"`
+	Reasons []string `json:"reasons,omitempty"`
+}
+
+// notifyCommand raises one run_shell call to the user, on two channels.
+//
+// The stream event is what the transcript shows; the Windows toast is what
+// reaches the person who is not looking at the tab. It is sent whether or not
+// the call also asks for approval: a command that Always Allow lets through is
+// exactly the one nobody expects to see run.
+func (a *Agent) notifyCommand(emit func(string, string), tc ToolCall, risk Risk) {
+	var args struct {
+		Command string `json:"command"`
+	}
+	_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
+	note := commandNote{
+		Tool:    tc.Function.Name,
+		Command: oneLine(args.Command),
+		Level:   risk.Level,
+		Reasons: risk.Reasons,
+	}
+	emit("notify", mustJSON(note))
+
+	// Settings > Safety decides whether this reaches the desktop: off, dangerous
+	// only, or every command. In a goroutine, because the toast waits for
+	// PowerShell to start and a command must not wait for its own notification.
+	if !a.cfg.desktopNotifyFor(risk.Level) {
+		return
+	}
+	title := "dsagent: command"
+	if risk.Level == riskDangerous {
+		title = "dsagent: dangerous command"
+	}
+	body := note.Command
+	if len(note.Reasons) > 0 {
+		body += " - " + strings.Join(note.Reasons, "; ")
+	}
+	go desktopToast(title, body)
+}
+
 // cancelledToolResult is what a tool call returns when the run was cancelled
 // before the call had any effect. It exists so the transcript can keep its one
 // hard promise: a call reported as "not executed" has provably not executed.
@@ -1301,6 +1374,15 @@ func (a *Agent) execTool(ctx context.Context, root string, tc ToolCall, mode str
 
 	risk := classifyTool(tc.Function.Name, tc.Function.Arguments)
 	dangerous := risk.isDangerous()
+
+	// A shell command is the moment a run touches the machine, so the user is
+	// told about it as it happens rather than afterwards. Every command is sent
+	// with its risk level and the browser decides what to show (Settings >
+	// Safety: any command, or only the dangerous ones): the switch belongs to
+	// the person watching and must not need a restart to change.
+	if tc.Function.Name == "run_shell" {
+		a.notifyCommand(emit, tc, risk)
+	}
 
 	// Plan mode never skips the prompt: reading is free, running is not.
 	// A dangerous call is never covered by Always Allow either - it always stops

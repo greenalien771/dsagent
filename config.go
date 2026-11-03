@@ -52,6 +52,14 @@ type Config struct {
 	// Dangerous: the agent then runs unattended. Set from Safety in Settings.
 	AutoApprove bool `json:"auto_approve"`
 
+	// NotifyAny and NotifyDanger are the two command-notification switches in
+	// Settings > Safety, and they are one choice: any command, or only the ones
+	// the risk layer calls dangerous. They live in the server config rather than
+	// in the browser because the notification is raised by this process as a
+	// Windows toast - the tab may not even be open, which is the whole point.
+	NotifyAny    bool `json:"notify_any"`
+	NotifyDanger bool `json:"notify_danger"`
+
 	// IdleTimeoutSec and RunTimeoutMin size the run watchdog: a task that
 	// produces no output for IdleTimeoutSec, or that runs longer than
 	// RunTimeoutMin of wall clock, is cancelled. They are the numbers the
@@ -146,6 +154,7 @@ func defaultConfig() *Config {
 		Provider:        string(prov.ID),
 		Model:           prov.Model,
 		MaxSteps:        25,
+		NotifyDanger:    true,
 		IdleTimeoutSec:  defaultIdleTimeoutSec,
 		RunTimeoutMin:   defaultRunTimeoutMin,
 		ShellTimeoutSec: defaultShellTimeoutSec,
@@ -163,6 +172,18 @@ func loadConfig() *Config {
 			os.Rename(configPath(), configPath()+".corrupt")
 			c = defaultConfig()
 		} else {
+			// A config file written before the notification switches existed has
+			// neither key. The dangerous-only default belongs to that case and not
+			// to a file that says false on purpose, so presence is what is checked
+			// here, not the value.
+			var notify struct {
+				NotifyAny    *bool `json:"notify_any"`
+				NotifyDanger *bool `json:"notify_danger"`
+			}
+			if json.Unmarshal(raw, &notify) == nil && notify.NotifyAny == nil && notify.NotifyDanger == nil {
+				c.NotifyDanger = true
+			}
+
 			// Migrate a plaintext key out of config.json as soon as we see one.
 			var legacy legacyConfig
 			if json.Unmarshal(raw, &legacy) == nil && legacy.APIKey != nil {
@@ -364,6 +385,8 @@ type configView struct {
 	WorkDir         string     `json:"workdir"`
 	MaxSteps        int        `json:"max_steps"`
 	AutoApprove     bool       `json:"auto_approve"`
+	NotifyAny       bool       `json:"notify_any"`
+	NotifyDanger    bool       `json:"notify_danger"`
 	IdleTimeoutSec  int        `json:"idle_timeout_sec"`
 	RunTimeoutMin   int        `json:"run_timeout_min"`
 	ShellTimeoutSec int        `json:"shell_timeout_sec"`
@@ -393,6 +416,8 @@ func viewOf(c *Config) configView {
 		WorkDir:         c.WorkDir,
 		MaxSteps:        c.MaxSteps,
 		AutoApprove:     c.AutoApprove,
+		NotifyAny:       c.NotifyAny,
+		NotifyDanger:    c.NotifyDanger,
 		IdleTimeoutSec:  c.IdleTimeoutSec,
 		RunTimeoutMin:   c.RunTimeoutMin,
 		ShellTimeoutSec: c.ShellTimeoutSec,
@@ -424,6 +449,11 @@ type configPatch struct {
 	WorkDir     *string `json:"workdir"`
 	MaxSteps    *int    `json:"max_steps"`
 	AutoApprove *bool   `json:"auto_approve"`
+	// The two command-notification switches. Sent one at a time from Safety,
+	// which is why they are separate pointers rather than one "notify" enum: a
+	// browser that only knows the older one can still save.
+	NotifyAny    *bool `json:"notify_any"`
+	NotifyDanger *bool `json:"notify_danger"`
 	// Provider switches vendor; base_url overrides that vendor's endpoint.
 	Provider *string `json:"provider"`
 	BaseURL  *string `json:"base_url"`
@@ -538,6 +568,23 @@ func applyPatch(c *Config, p configPatch) error {
 	if p.AutoApprove != nil {
 		c.AutoApprove = *p.AutoApprove
 	}
+	// One switch on means the other is off: "any command" already contains the
+	// dangerous ones, and a file that says both must still answer one question.
+	if p.NotifyAny != nil || p.NotifyDanger != nil {
+		any, danger := c.NotifyAny, c.NotifyDanger
+		if p.NotifyAny != nil {
+			any = *p.NotifyAny
+		}
+		if p.NotifyDanger != nil {
+			danger = *p.NotifyDanger
+		}
+		if any && danger {
+			// Both on is not a third state: the wider switch already covers the
+			// narrow one, so it wins.
+			danger = false
+		}
+		c.NotifyAny, c.NotifyDanger = any, danger
+	}
 	if p.IdleTimeoutSec != nil {
 		if v := *p.IdleTimeoutSec; v < minIdleTimeoutSec || v > maxIdleTimeoutSec {
 			errs = append(errs, fmt.Sprintf("idle timeout must be between %d and %d seconds",
@@ -609,6 +656,15 @@ func autoApprove(c *Config) bool {
 	cfgMu.Lock()
 	defer cfgMu.Unlock()
 	return c.AutoApprove
+}
+
+// desktopNotifyFor answers whether a command of this risk level should raise a
+// Windows notification. Read under cfgMu like autoApprove: a Save that lands in
+// the middle of a run decides the next command, not the next task.
+func (c *Config) desktopNotifyFor(level string) bool {
+	cfgMu.Lock()
+	defer cfgMu.Unlock()
+	return c.NotifyAny || (c.NotifyDanger && level == riskDangerous)
 }
 
 func setAutoApprove(c *Config, v bool) {
