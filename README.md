@@ -9,13 +9,13 @@
   <img src="https://img.shields.io/badge/Go-1.21%2B-blue" alt="Go 1.21+">
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License: MIT">
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey" alt="Platform: Windows | macOS | Linux">
-  <img src="https://img.shields.io/badge/tools-12-blue" alt="12 tools">
+  <img src="https://img.shields.io/badge/tools-14-blue" alt="14 tools">
 </p>
 
 A coding agent in one Go binary. It serves its own UI on loopback, talks to an
 OpenAI-compatible `/chat/completions` endpoint - DeepSeek by default, with Qwen
-(DashScope) and z.ai (GLM) built in - and runs tools - list, read, write, shell,
-fetch, screenshot, window control, plus the tools of any MCP server you
+(DashScope) and z.ai (GLM) built in - and runs tools - list, read, write, patch,
+shell, fetch, screenshot, window control, plus the tools of any MCP server you
 configure - inside a working directory you choose.
 Mutating calls stop at an approval card before they run, and a call classified
 dangerous needs the confirmation word typed into that card. A task ends with the
@@ -146,7 +146,7 @@ the environment variable and keep nothing on disk.
 | mode | sees | can do |
 |---|---|---|
 | Agent | all tools | everything, each mutating call behind an approval card |
-| Plan | every tool but the mutating ones | reads and investigates; `run_shell` always prompts, `write_file` and `window_control` are not offered |
+| Plan | every tool but the mutating ones | reads and investigates; `run_shell` always prompts, `write_file`, `edit_file` and `window_control` are not offered |
 | Ask | read-only tools | answers questions, changes nothing; `list_windows` still asks before it lists what you have open |
 
 ## Task effort
@@ -173,6 +173,48 @@ answer can stay in one run with `ask_user` instead of ending:
 | tool | what it does |
 |---|---|
 | `ask_user` | Asks a question and waits. The run pauses - it does not finish - and the answer arrives as the tool result, so "your move" or "which file did you mean" costs one step instead of a fresh task, a fresh plan and the thread of the conversation. Suggested options are drawn as buttons; the field is still there. It never asks for approval, because there is nothing to approve. |
+
+## Editing files
+
+Two write tools, because they answer two different intentions. `write_file`
+creates a file or replaces one whole. `edit_file` replaces one exact piece of text
+in a file that already exists, and leaves every other byte alone:
+
+```json
+{"path": "src/main.go", "old": "timeout := 30 * time.Second", "new": "timeout := 2 * time.Minute"}
+```
+
+The first paragraph of the system prompt asks for the smallest correct change and
+for the file's encoding and line endings to survive it. `write_file` could not do
+that: a one-line fix to a 900-line file went out and came back in full, with every
+byte the task never mentioned rewritten along the way, and the diff the user
+reviewed held hundreds of lines of noise. The same rule now has a tool behind it.
+
+- **The match must be unique.** If `old` appears more than once, the call is
+  refused, the refusal names the lines it found and nothing is written - a string
+  that matches twice has not identified a place, and replacing the first of them
+  is how a patch tool corrupts a file while reporting success. Include the line
+  above or below to make it unique, or pass `"all": true` to replace every
+  occurrence on purpose.
+- **Byte for byte, and nothing else.** The search is literal - no patterns, no
+  whitespace folding - and everything outside the match is untouched, which is
+  the whole point: no re-encoding, no reformatting, no BOM added, no trailing
+  newline invented or lost. An empty `new` deletes the text.
+- **Line endings are the one mismatch it forgives.** A file written on Windows
+  has CRLF and the text in a tool call almost always has LF. Rather than fail on
+  text that is sitting in plain sight, the search retries the file's own
+  convention and says so; the replacement is converted the same way, so the file
+  does not come back with one LF-only line in it.
+- **A miss is explained.** A search that matches nothing but matches once
+  whitespace is ignored says so, because "not found" for a line the model just
+  read costs it two more reads and it still does not know why.
+- **It reports where it landed** - the line, how many places, and the size before
+  and after - so the model can describe the change without reading the file back.
+- **It is gated like `write_file`**: offered in Agent mode only, always behind the
+  approval card, and classified by the same path rules, so an edit into
+  `.git/hooks` or a credentials file is as dangerous one line at a time as it is
+  wholesale. A path outside the workspace is refused by the same sandbox, links
+  and junctions included.
 
 ## Images and the screen
 
@@ -353,7 +395,7 @@ service. They are also the parts worth reading before you trust it:
   authorities it created. Requests with a foreign `Origin`/`Host` (the shape of a
   DNS-rebinding attack from a hostile web page) are rejected, and responses carry
   a strict CSP.
-- **Approval gate.** `run_shell`, `write_file` and `window_control` always prompt
+- **Approval gate.** `run_shell`, `write_file`, `edit_file` and `window_control` always prompt
   unless you enable auto-approve. `web_fetch` prompts too whenever the URL is flagged - one that
   resolves to this machine or the local network - and `screenshot` always prompts
   outside Agent mode, because it uploads your desktop. `list_windows` joins them
@@ -426,6 +468,7 @@ it.
 | `main.go` | server setup, embedded UI, loopback binding, config/key endpoints |
 | `agent.go` | the run loop, streaming, approvals, watchdog, abort |
 | `tools.go` | tool schemas and implementations, path sandbox, fetch policy |
+| `edit.go` | `edit_file`: exact matching, the uniqueness rule, line-ending tolerance |
 | `providers.go` | the provider registry: endpoints, key variables, model defaults, vision rules |
 | `safety.go` | command risk classifier and the per-tool approval rules |
 | `guard.go` | host/origin guards and security headers |

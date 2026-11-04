@@ -1272,7 +1272,8 @@
               <h4>Safety</h4>
               <div style="font-size:12px;color:var(--muted);line-height:1.55">
                 <code style="font-family:var(--mono);font-size:11px;color:var(--text-2)">run_shell</code> and
-                <code style="font-family:var(--mono);font-size:11px;color:var(--text-2)">write_file</code> ask for approval by default.
+                <code style="font-family:var(--mono);font-size:11px;color:var(--text-2)">write_file</code>,
+                <code style="font-family:var(--mono);font-size:11px;color:var(--text-2)">edit_file</code> ask for approval by default.
                 Read-only tools (<code style="font-family:var(--mono);font-size:11px;color:var(--text-2)">list_dir</code>,
                 <code style="font-family:var(--mono);font-size:11px;color:var(--text-2)">read_file</code>,
                 <code style="font-family:var(--mono);font-size:11px;color:var(--text-2)">read_image</code>,
@@ -1530,7 +1531,7 @@
               <button class="btn-always" id="alwaysBtn" onclick="applyAlwaysAllow()">Always Allow</button>
               <span class="pref-hint" id="alwaysState" style="margin:0">Off - every mutating call asks first.</span>
             </div>
-            <div class="perm-warn">&#9888; <b>Dangerous.</b> Ordinary approval prompts are skipped: <code>run_shell</code> and <code>write_file</code> run unattended. Commands flagged as dangerous still stop and ask - this switch can never approve those, and it is ignored in Plan mode.</div>
+            <div class="perm-warn">&#9888; <b>Dangerous.</b> Ordinary approval prompts are skipped: <code>run_shell</code>, <code>write_file</code> and <code>edit_file</code> run unattended. Commands flagged as dangerous still stop and ask - this switch can never approve those, and it is ignored in Plan mode.</div>
           </div>
 
           <div class="sw-card">
@@ -1601,7 +1602,7 @@
             <div class="sw-kv"><span class="k">Model</span><span class="v" id="aboutModel">-</span></div>
             <div class="sw-kv"><span class="k">Workspace</span><span class="v" id="aboutWorkdir">-</span></div>
             <div class="sw-kv"><span class="k">Step limit</span><span class="v" id="aboutSteps">-</span></div>
-            <div class="sw-kv"><span class="k">Tools</span><span class="v">list_dir, read_file, read_image, write_file, run_shell, web_fetch</span></div>
+            <div class="sw-kv"><span class="k">Tools</span><span class="v">list_dir, read_file, read_image, edit_file, write_file, run_shell, web_fetch, screenshot, list_windows, window_control, wait, ask_user, mcp_control</span></div>
             <div class="sw-kv"><span class="k">Approval API</span><span class="v">/api/approve</span></div>
             <div class="sw-kv"><span class="k">Answer API</span><span class="v">/api/answer</span></div>
             <div class="sw-kv"><span class="k">Run control</span><span class="v">/api/stop, /api/abort, /api/status</span></div>
@@ -1784,7 +1785,7 @@ const state = {
 const MODE_LABEL = { agent: 'Agent', plan: 'Plan', ask: 'Ask' };
 const MODE_DESC = {
   agent: 'Agent mode: full autonomy',
-  plan: 'Plan mode: write_file is off, every command asks first',
+  plan: 'Plan mode: write_file and edit_file are off, every command asks first',
   ask: 'Ask mode: read-only answers, no writes or commands'
 };
 
@@ -1932,6 +1933,9 @@ const TOOL_ICONS = {
   list_dir: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>',
   read_file: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><polyline points="14 3 14 8 19 8"></polyline><line x1="9" y1="13" x2="15" y2="13"></line><line x1="9" y1="17" x2="13" y2="17"></line>',
   write_file: '<path d="M12 20h9"></path><path d="M16.6 3.6a2.1 2.1 0 0 1 3 3L7.5 18.7 3 20l1.3-4.5z"></path>',
+  // edit_file is the pencil that writes onto a page rather than replacing it,
+  // which is the difference the two tools exist to make.
+  edit_file: '<path d="M13 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"></path><path d="M17.5 2.5a2.1 2.1 0 0 1 3 3L13 13l-4 1 1-4z"></path>',
   run_shell: '<path d="M4 7l5 5-5 5"></path><path d="M12 17h8"></path>',
   read_image: '<rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline>',
   web_fetch: '<circle cx="12" cy="12" r="9"></circle><path d="M3 12h18"></path><path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18z"></path>',
@@ -3023,7 +3027,7 @@ function askApproval(sess, req, host) {
     '<div class="ap-note">' + ICONS.warn + '<div>' +
       (danger
         ? 'This call is irreversible or touches credentials. <b>Always Allow</b> does not apply to it, and the server rejects any approval that is not confirmed with <code>' + esc(word) + '</code>.'
-        : '<b>Always Allow</b> switches off ordinary permission prompts: <code>run_shell</code> and <code>write_file</code> then run unattended. Dangerous commands still ask.') +
+        : '<b>Always Allow</b> switches off ordinary permission prompts: <code>run_shell</code>, <code>write_file</code> and <code>edit_file</code> then run unattended. Dangerous commands still ask.') +
     '</div></div>';
 
   card.querySelector('.ap-head span').textContent = danger
@@ -4688,7 +4692,7 @@ function paintAlwaysAllow(on) {
   const note = $('#alwaysState');
   if (note) {
     note.textContent = on
-      ? 'ON - run_shell and write_file run unattended. Dangerous calls still ask.'
+      ? 'ON - run_shell, write_file and edit_file run unattended. Dangerous calls still ask.'
       : 'Off - every mutating call asks first.';
   }
 }

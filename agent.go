@@ -556,7 +556,7 @@ func modeBlock(mode string) string {
 	case ModePlan:
 		return `# Mode: PLAN (read-only)
 You may investigate the workspace, but you must not change it.
-- write_file is disabled in this mode. Do not attempt it.
+- write_file and edit_file are disabled in this mode. Do not attempt them.
 - Every run_shell command is shown to the user for approval first, so keep
   commands read-only and few (git status, git diff, ls, grep, go vet, tests).
 - Finish by proposing a concrete, ordered plan: which files change, what the
@@ -565,7 +565,7 @@ You may investigate the workspace, but you must not change it.
 	case ModeAsk:
 		return `# Mode: ASK (read-only Q&A)
 You are answering a question about the code, not changing it.
-- write_file and run_shell are both disabled in this mode. Do not attempt them.
+- write_file, edit_file and run_shell are all disabled in this mode. Do not attempt them.
 - Answer from list_dir, read_file and web_fetch, citing file references.
 - If the answer would require running something or editing a file, say exactly
   which command or edit you would use and stop there.`
@@ -699,8 +699,11 @@ You can look at and drive other windows; the user does not have to open, focus o
 2. Look first. list_dir, then read the exact files involved. Never assume a function exists, a path
    is right or a tool is installed - check with 'where <tool>' (Windows) or 'command -v <tool>'.
 3. Make the smallest correct change. No drive-by refactors, no renaming or reformatting the task did
-   not ask for, no rewriting a file you only meant to patch. Match the surrounding style, keep the
-   comments that explain intent, and preserve the file's encoding and line endings.
+   not ask for. Patch with edit_file, not with a whole-file write: it replaces one exact piece of
+   text and leaves every other byte - the encoding, the line endings, the formatting you were not
+   asked to touch - exactly as it was. write_file is for a new file or for one short enough that
+   rewriting it whole is the honest description of what you did. Match the surrounding style and
+   keep the comments that explain intent.
 4. Verify by running the thing: build it, vet it, test it, or execute the changed code path. A change
    you did not run is a guess, and you must label it as one.
 5. Report the real result, with the exact commands you ran and what they returned.
@@ -1892,7 +1895,7 @@ func (a *Agent) setAlwaysAllow(v bool) {
 func modeTitle(mode string) string {
 	switch mode {
 	case ModePlan:
-		return "Plan (read-only, write_file disabled)"
+		return "Plan (read-only, write_file and edit_file disabled)"
 	case ModeAsk:
 		return "Ask (read-only, no writes or commands)"
 	default:
@@ -1917,7 +1920,7 @@ func modeDenies(mode, tool string) (string, bool) {
 		if tool == "mcp_control" {
 			return "DENIED by plan mode: this session is read-only, and starting or stopping a server is a change. Name the server and the action in your plan instead; the user switches to Agent mode to run it.", true
 		}
-		if tool == "write_file" {
+		if tool == "write_file" || tool == "edit_file" {
 			return "DENIED by plan mode: this session is read-only. Describe the change in your plan instead; the user switches to Agent mode to apply it.", true
 		}
 		if tool == "window_control" {
@@ -1930,7 +1933,7 @@ func modeDenies(mode, tool string) (string, bool) {
 		if tool == "window_control" {
 			return "DENIED by ask mode: this session only answers questions. State which window you would act on and why, then stop.", true
 		}
-		if tool == "write_file" || tool == "run_shell" {
+		if tool == "write_file" || tool == "edit_file" || tool == "run_shell" {
 			return "DENIED by ask mode: this session only answers questions. State the command or edit you would use, then stop.", true
 		}
 	}

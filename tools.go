@@ -95,7 +95,21 @@ func toolSchemas(mode string) []map[string]any {
 		tools = append(tools,
 			fn("write_file", "Create or overwrite a text file.", map[string]any{
 				"path":    map[string]any{"type": "string"},
-				"content": map[string]any{"type": "string"}}, []string{"path", "content"}))
+				"content": map[string]any{"type": "string"}}, []string{"path", "content"}),
+
+			// edit_file is the other half of write_file, and the half the prompt
+			// asks for: "no rewriting a file you only meant to patch" was a rule
+			// with no tool behind it, so a one-line change to a big file went out
+			// and back in full, rewriting every byte it did not touch. The
+			// description carries the one rule that makes an exact-string edit safe
+			// - the match has to be unique - because a model that has not read it
+			// will happily replace the first of six.
+			fn("edit_file", `Replace one exact piece of text in a file that already exists. This is how you patch: every byte outside the match stays exactly as it was, so nothing is reformatted, re-encoded or given different line endings, and the result names the line it changed.
+"old" must appear exactly once in the file. If it matches more than once the call is refused and nothing is written, because a match that is not unique has not identified a place - include the line above or below to make it unique, or pass "all": true to replace every occurrence on purpose. "new" may be empty, which deletes the text. Both are matched literally, not as patterns. Use write_file to create a file or to replace a whole one.`, map[string]any{
+				"path": map[string]any{"type": "string"},
+				"old":  map[string]any{"type": "string", "description": "the exact text to replace, copied out of the file - indentation included"},
+				"new":  map[string]any{"type": "string", "description": "the text that replaces it; empty deletes it"},
+				"all":  map[string]any{"type": "boolean", "description": "replace every occurrence instead of requiring exactly one, default false"}}, []string{"path", "old", "new"}))
 	}
 
 	// Window control is a side effect on something outside the workspace, so it
@@ -172,8 +186,8 @@ func needsApproval(name string) bool {
 	// An MCP tool belongs to a third-party server the user configured. This agent
 	// cannot classify what it does with its arguments, so every call is shown
 	// before it runs - the same rule run_shell follows, for the same reason.
-	return name == "run_shell" || name == "write_file" || name == "screenshot" || name == "window_control" ||
-		isMCPToolName(name)
+	return name == "run_shell" || name == "write_file" || name == "edit_file" || name == "screenshot" ||
+		name == "window_control" || isMCPToolName(name)
 }
 
 // safeJoin resolves rel against root and refuses anything that lands outside it.
@@ -365,6 +379,12 @@ func runTool(ctx context.Context, root string, tc ToolCall, shellLimit time.Dura
 			return "ERROR: " + err.Error()
 		}
 		return fmt.Sprintf("OK: wrote %d bytes to %s", len(content), str("path"))
+
+	case "edit_file":
+		// The patch path has its own file: exact matching, the uniqueness rule and
+		// the line-ending tolerance are more logic than the rest of this switch
+		// holds, and they are where a mistake would corrupt a file.
+		return editFileTool(root, tc.Function.Arguments)
 
 	case "run_shell":
 		// Per-command cap, from Settings > Agent. The parent ctx still bounds the

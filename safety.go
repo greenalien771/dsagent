@@ -180,22 +180,8 @@ func classifyTool(name, rawArgs string) Risk {
 	case "run_shell":
 		return classifyCommand(str("command"))
 
-	case "write_file":
-		p := filepath.ToSlash(strings.ToLower(str("path")))
-		switch {
-		case p == ".git" || strings.HasPrefix(p, ".git/") || strings.Contains(p, "/.git/"):
-			return Risk{Level: riskDangerous, Reasons: []string{"writes inside .git (hooks, config or history)"}}
-		case strings.Contains(p, ".ssh/"), strings.HasSuffix(p, "id_rsa"), strings.HasSuffix(p, "id_ed25519"),
-			strings.HasSuffix(p, ".env"), strings.Contains(p, ".aws/credentials"),
-			strings.HasSuffix(p, ".netrc"), strings.HasSuffix(p, ".git-credentials"):
-			return Risk{Level: riskDangerous, Reasons: []string{"writes a credentials file"}}
-		case strings.Contains(p, "api_key"):
-			return Risk{Level: riskDangerous, Reasons: []string{"targets the stored API key"}}
-		case strings.HasSuffix(p, "package.json"), strings.HasSuffix(p, "go.mod"), strings.HasPrefix(p, ".vscode/"),
-			strings.HasSuffix(p, "makefile"):
-			return Risk{Level: riskElevated, Reasons: []string{"edits a project manifest"}}
-		}
-		return Risk{Level: riskSafe}
+	case "write_file", "edit_file":
+		return classifyWritePath(str("path"))
 
 	case "screenshot":
 		// Not destructive, but it does hand the contents of the user's desktop to
@@ -261,6 +247,30 @@ func classifyTool(name, rawArgs string) Risk {
 			return Risk{Level: riskElevated, Reasons: []string{"fetches from this machine or the local network"}}
 		}
 		return Risk{Level: riskSafe}
+	}
+	return Risk{Level: riskSafe}
+}
+
+// classifyWritePath judges a destination once, for both write tools. An edit and
+// an overwrite change the same bytes as far as the risk layer is concerned: a
+// line spliced into .git/hooks/pre-commit runs exactly like a whole file written
+// there, and a credentials file is no less compromised for having had one
+// character changed. Sharing the rules is also what stops the two from drifting
+// apart as one of them learns about a new file worth refusing.
+func classifyWritePath(path string) Risk {
+	p := filepath.ToSlash(strings.ToLower(path))
+	switch {
+	case p == ".git" || strings.HasPrefix(p, ".git/") || strings.Contains(p, "/.git/"):
+		return Risk{Level: riskDangerous, Reasons: []string{"writes inside .git (hooks, config or history)"}}
+	case strings.Contains(p, ".ssh/"), strings.HasSuffix(p, "id_rsa"), strings.HasSuffix(p, "id_ed25519"),
+		strings.HasSuffix(p, ".env"), strings.Contains(p, ".aws/credentials"),
+		strings.HasSuffix(p, ".netrc"), strings.HasSuffix(p, ".git-credentials"):
+		return Risk{Level: riskDangerous, Reasons: []string{"writes a credentials file"}}
+	case strings.Contains(p, "api_key"):
+		return Risk{Level: riskDangerous, Reasons: []string{"targets the stored API key"}}
+	case strings.HasSuffix(p, "package.json"), strings.HasSuffix(p, "go.mod"), strings.HasPrefix(p, ".vscode/"),
+		strings.HasSuffix(p, "makefile"):
+		return Risk{Level: riskElevated, Reasons: []string{"edits a project manifest"}}
 	}
 	return Risk{Level: riskSafe}
 }
