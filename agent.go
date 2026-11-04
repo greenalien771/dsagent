@@ -71,6 +71,15 @@ type approvalRequest struct {
 	Confirm string `json:"confirm,omitempty"`
 }
 
+// questionRequest is what the browser needs to draw an ask_user card. The run is
+// parked on it, so the answer is posted to /api/answer; typing into the composer
+// would start a second task instead of answering this one.
+type questionRequest struct {
+	ID       string   `json:"id"`
+	Question string   `json:"question"`
+	Options  []string `json:"options,omitempty"`
+}
+
 // Watchdog limits. A run that produces no output for the idle limit is treated
 // as stuck and cancelled; the wall-clock limit caps a single task no matter how
 // busy it looks. Both are configurable from Agent in Settings - these two are
@@ -113,10 +122,14 @@ type Agent struct {
 	// because a server process is expensive to start and expensive to lose
 	// halfway through a session.
 	mcp *mcpManager
+
+	// asks holds the questions a run is parked on (ask_user), keyed by the tool
+	// call id like approvals: an answer can only land on the call that asked it.
+	asks map[string]chan string
 }
 
 func NewAgent(c *Config) *Agent {
-	return &Agent{cfg: c, approvals: map[string]*pendingApproval{}, mode: ModeAgent, calls: map[string]int{}, mcp: newMCPManager()}
+	return &Agent{cfg: c, approvals: map[string]*pendingApproval{}, mode: ModeAgent, calls: map[string]int{}, mcp: newMCPManager(), asks: map[string]chan string{}}
 }
 
 // ---- run bookkeeping ---------------------------------------------------
@@ -349,6 +362,12 @@ func (a *Agent) handleAbort(w http.ResponseWriter, r *http.Request) {
 		default:
 		}
 	}
+	// A waiting question is dropped the same way: the run that asked it is over,
+	// so an answer arriving now would land in a transcript that already stopped.
+	// The cancelled context is what releases the goroutine parked on it.
+	for id := range a.asks {
+		delete(a.asks, id)
+	}
 	a.mu.Unlock()
 
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "forced": forced})
@@ -476,6 +495,61 @@ func normalizeMode(m string) string {
 	}
 }
 
+// The three deliberation levels. They are prompt text and nothing else: the
+// tool set, the risk layer and the approvals do not move, so switching to
+// "direct" can make a run shorter but never less careful about what it touches.
+const (
+	effortDirect   = "direct"
+	effortBalanced = "balanced"
+	effortThorough = "thorough"
+)
+
+// normalizeEffort maps anything unrecognised to the balanced default, so a typo
+// can neither make every task reckless nor make every task slow.
+func normalizeEffort(e string) string {
+	switch strings.ToLower(strings.TrimSpace(e)) {
+	case effortDirect:
+		return effortDirect
+	case effortThorough:
+		return effortThorough
+	default:
+		return effortBalanced
+	}
+}
+
+// effortBlock is the part of the prompt that decides how long a task thinks
+// before it acts.
+func effortBlock(effort string) string {
+	switch effort {
+	case effortDirect:
+		return `# Effort: DIRECT
+The instruction is an action, so perform it. If the request names what to do and a tool can do it,
+call that tool on the first step - do not survey, do not test, do not plan out loud.
+- "Shoot the enemy", "open that page", "click Start", "play centre": one call, then report what
+  happened. A quick look first is warranted only when the call would be wrong without it, and then
+  it is one look and back to the action.
+- This is not permission to skip verification of a CHANGE to the user's code: writing files and
+  running commands still end with the command that proves the result.
+- If the task turns out to be genuinely complex - the simple call fails, or the request is hiding
+  several steps - say so in one line and switch to the thorough approach for the rest of the task.
+  Being direct is a starting posture, not a cap on how well the task can end.`
+	case effortThorough:
+		return `# Effort: THOROUGH
+Spend the steps: read the surrounding code before editing, state the plan in one line, make the
+change, then verify it and report the evidence. Prefer one more investigative call over guessing.
+- Do not shorten this for a task that looks simple: a small change in a large system is where the
+  investigation pays for itself.`
+	default:
+		return `# Effort: BALANCED
+Match the work to the request. A plain action ("open it", "click that", "where is X") gets done in
+the call that does it, without a survey first. A change to the user's code gets looked at, made and
+verified. Escalate to the thorough approach when the task is ambiguous or touches something that
+cannot easily be put back, and drop to direct when it plainly does not need more steps.
+- A task that is a conversation (a game move, a choice, "what next") should use ask_user and keep
+  its state, rather than spending steps re-deriving what the user already said.`
+	}
+}
+
 // modeBlock is the part of the system prompt that changes with the posture.
 func modeBlock(mode string) string {
 	switch mode {
@@ -572,6 +646,16 @@ You can look at and drive other windows; the user does not have to open, focus o
   and window_control refuses that by pid. The browser tab showing the UI is a different process,
   which the tool cannot recognise as yours - and closing it ends the run mid-edit - so leave that
   window alone too.
+
+# Asking the user
+- ask_user pauses the run and waits for the user's answer, then continues in the same run. Use it for
+  a short interactive task - a game, a choice between options, "shall I keep going" - where stopping
+  to ask in prose would cost a whole new task and lose the thread.
+- Use it when only the user knows the answer or only they may decide: their move, which of two files
+  they meant, whether to overwrite something, what to type into a form on their screen.
+- Do not use it to ask permission for a tool call - the approval card does that - and do not use it
+  for anything you could find out yourself with list_dir, read_file or web_fetch. Ask one question at
+  a time, worded so that a word or a sentence answers it.
 
 # Ways you are likely to break something (hard rules, not preferences)
 1. Killing yourself. Never stop, restart or terminate your own process, or the console hosting it.
@@ -778,7 +862,7 @@ func (a *Agent) run(ctx context.Context, task, mode string, images []imagePart, 
 
 	// Rebuilding (rather than appending) the system message keeps exactly one
 	// posture in the transcript, even when the user flips modes mid-session.
-	prompt := buildSystemPrompt(mode, workDir, a.cfg.shellTimeout())
+	prompt := buildSystemPrompt(mode, workDir, a.cfg.shellTimeout()) + "\n\n" + effortBlock(a.cfg.effort())
 
 	a.mu.Lock()
 	// Repair first: the previous run may have been force-aborted between an
@@ -1372,6 +1456,21 @@ func (a *Agent) execTool(ctx context.Context, root string, tc ToolCall, mode str
 		return "REFUSED: this exact call already ran three times in this task and will not behave differently. Re-read the earlier output, then either change the approach or report the blocker to the user."
 	}
 
+	// ask_user is the one tool that waits for a human instead of doing something,
+	// so it is answered here - ahead of the risk layer and the approval card,
+	// because there is nothing to approve. The answer is the whole result, and a
+	// permission card on top of a question would be two prompts for one decision.
+	if tc.Function.Name == "ask_user" {
+		return a.askUser(ctx, tc, emit)
+	}
+
+	// The server's own policy decides first: a blocked server is refused before
+	// the risk layer, the ledger or a card, because its tools are not the user's
+	// decision to make again on every call - they already said no.
+	if isMCPToolName(tc.Function.Name) && a.mcpApproval(tc.Function.Name) == mcpApprovalBlock {
+		return "REFUSED: this tool's MCP server is set to \"block\" in Settings > MCP, so its tools are not offered and the call was not sent. Ask the user to change that server's approval policy if the task needs it."
+	}
+
 	risk := classifyTool(tc.Function.Name, tc.Function.Arguments)
 	dangerous := risk.isDangerous()
 
@@ -1390,7 +1489,7 @@ func (a *Agent) execTool(ctx context.Context, root string, tc ToolCall, mode str
 	// A fetch that reaches this machine or the local network is a request the
 	// user should see, so web_fetch joins run_shell and write_file in asking
 	// whenever the risk layer flags its target.
-	needsPrompt := needsApproval(tc.Function.Name) ||
+	needsPrompt := a.approvalNeeded(tc.Function.Name) ||
 		(promptsOnRisk(tc.Function.Name) && risk.Level != riskSafe)
 	// Always Allow covers full autonomy only, and it never covers a call that
 	// cannot be undone by running it again: a dangerous one, or one neverAuto
@@ -1472,6 +1571,35 @@ func (a *Agent) execTool(ctx context.Context, root string, tc ToolCall, mode str
 	}
 
 	return redact(runTool(ctx, root, tc, limit, a.touch))
+}
+
+// mcpApproval is the policy of the server that owns a tool name. A name with no
+// live route asks, which is the same rule the catalogue applies.
+func (a *Agent) mcpApproval(wire string) string {
+	name := a.mcp.serverOf(wire)
+	if name == "" {
+		return mcpApprovalAsk
+	}
+	cfg, ok := a.mcp.configOf(name)
+	if !ok {
+		return mcpApprovalAsk
+	}
+	return cfg.approval()
+}
+
+// approvalNeeded is needsApproval with the MCP server's own setting applied: a
+// server the user marked "allow" does not stop for a card on every step, and one
+// marked "block" is refused before this is reached.
+func (a *Agent) approvalNeeded(name string) bool {
+	if isMCPToolName(name) {
+		switch a.mcpApproval(name) {
+		case mcpApprovalAllow:
+			return false
+		case mcpApprovalBlock:
+			return false
+		}
+	}
+	return needsApproval(name)
 }
 
 // mcpAct performs one MCP action, so the settings endpoint and the tool go
@@ -1575,6 +1703,14 @@ func (a *Agent) mcpStatusText() string {
 	var b strings.Builder
 	for _, s := range statuses {
 		b.WriteString(s.Name)
+		if cfg, ok := a.mcp.configOf(s.Name); ok {
+			switch cfg.approval() {
+			case mcpApprovalAllow:
+				b.WriteString(" [trusted: no card]")
+			case mcpApprovalBlock:
+				b.WriteString(" [blocked: tools not offered]")
+			}
+		}
 		switch {
 		case s.Disabled:
 			b.WriteString(" - disabled in the configuration, so it was never started")
@@ -1589,6 +1725,109 @@ func (a *Agent) mcpStatusText() string {
 	}
 	b.WriteString(fmt.Sprintf("%d MCP tool(s) are in the current tool list.", a.mcp.toolCount()))
 	return b.String()
+}
+
+// askUser parks the step until the user answers, then hands the answer back as
+// the tool result.
+//
+// This is what keeps a short interactive task inside one run. Without it the
+// only way to get an answer was to stop the run and let the user type the task
+// again, which costs a fresh request, a fresh plan and the thread of the
+// conversation - for a game move, a two-word reply.
+func (a *Agent) askUser(ctx context.Context, tc ToolCall, emit func(string, string)) string {
+	var args struct {
+		Question string   `json:"question"`
+		Options  []string `json:"options"`
+	}
+	if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+		return "BAD ARGS: " + err.Error() + ` - retry with {"question": "..."}`
+	}
+	question := strings.TrimSpace(args.Question)
+	if question == "" {
+		return `BAD ARGS: ask_user needs a non-empty "question". Ask what you actually need to know, or answer from what you already have.`
+	}
+	// Options are a convenience for the card, never a constraint: the field is
+	// still there and the user may type anything.
+	var options []string
+	for _, o := range args.Options {
+		if s := strings.TrimSpace(o); s != "" {
+			options = append(options, clipText(s, 120))
+		}
+	}
+
+	ch := make(chan string, 1)
+	a.mu.Lock()
+	if a.asks == nil {
+		a.asks = map[string]chan string{}
+	}
+	a.asks[tc.ID] = ch
+	a.mu.Unlock()
+	defer func() {
+		a.mu.Lock()
+		delete(a.asks, tc.ID)
+		a.mu.Unlock()
+	}()
+
+	emit("question", mustJSON(questionRequest{
+		ID:       tc.ID,
+		Question: clipText(question, 2000),
+		Options:  options,
+	}))
+
+	// A human deciding is not a wedged run. The watchdog measures silence, so the
+	// activity clock is refreshed while the card is on screen - otherwise a slow
+	// answer would be reported as "no activity" and the run cancelled in the
+	// middle of the thing the user was answering.
+	t := time.NewTicker(mcpPokeInterval)
+	defer t.Stop()
+	for {
+		select {
+		case answer := <-ch:
+			answer = strings.TrimSpace(answer)
+			if answer == "" {
+				return "The user sent an empty answer, which means they skipped the question. Continue without it and do not ask it again in this task."
+			}
+			return "The user answered:\n" + clipText(answer, 4000)
+		case <-ctx.Done():
+			return "ERROR: not answered - the run was cancelled while this question was on screen, so treat it as unanswered and do not guess."
+		case <-t.C:
+			a.touch()
+		}
+	}
+}
+
+// handleAnswer delivers the user's reply to the ask_user call that is waiting
+// for it. An id that is not waiting is refused rather than queued: the run it
+// belonged to is over, and answering it later would put text into a transcript
+// that already stopped.
+func (a *Agent) handleAnswer(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID     string `json:"id"`
+		Answer string `json:"answer"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		return
+	}
+	a.mu.Lock()
+	ch, waiting := a.asks[req.ID]
+	if waiting {
+		delete(a.asks, req.ID)
+	}
+	a.mu.Unlock()
+	if !waiting {
+		writeJSON(w, http.StatusNotFound, map[string]string{
+			"error": "that question is not waiting any more: the run ended, or it was already answered",
+		})
+		return
+	}
+	// The channel is buffered, so this cannot block even if the run is unwinding
+	// at the same moment.
+	select {
+	case ch <- req.Answer:
+	default:
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (a *Agent) handleApprove(w http.ResponseWriter, r *http.Request) {

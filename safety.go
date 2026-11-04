@@ -240,6 +240,10 @@ func classifyTool(name, rawArgs string) Risk {
 	case "wait":
 		return Risk{Level: riskSafe}
 
+	case "ask_user":
+		// Talking to the user changes nothing: no prompt, no Always Allow needed.
+		return Risk{Level: riskSafe}
+
 	case "web_fetch":
 		u := strings.TrimSpace(str("url"))
 		if u == "" {

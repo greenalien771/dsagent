@@ -78,6 +78,66 @@ type MCPServerConfig struct {
 	Dir string `json:"dir,omitempty"`
 	// Disabled keeps an entry configured without starting it.
 	Disabled bool `json:"disabled,omitempty"`
+
+	// Approval is the per-server rule for the permission card: mcpApprovalAsk
+	// (the default) shows every call, mcpApprovalAllow runs them without the card
+	// in Agent mode, and mcpApprovalBlock does not offer the tools at all.
+	//
+	// This is the setting a server earns over time: a browser driver the user
+	// trusts to read pages should not cost a click per step, while a file-system
+	// server pointed at a real folder should keep asking.
+	Approval string `json:"approval,omitempty"`
+
+	// Tools is an allow-list of tool names: empty means everything the server
+	// advertises. A model offered forty tools from one server wastes the request
+	// and picks the wrong one; naming the four that matter is the fix.
+	Tools []string `json:"tools,omitempty"`
+
+	// TimeoutSec bounds one tools/call on this server, because "how long may this
+	// take" is a property of the server and not of the agent: a screenshot is
+	// seconds, a browser automation run is minutes. Zero means the built-in cap.
+	TimeoutSec int `json:"timeout_sec,omitempty"`
+}
+
+// The three approval policies a server can carry.
+const (
+	mcpApprovalAsk   = "ask"
+	mcpApprovalAllow = "allow"
+	mcpApprovalBlock = "block"
+)
+
+// approval is the entry's policy, with the default filled in: a config written
+// before this field existed asks, which is the safe reading.
+func (c MCPServerConfig) approval() string {
+	switch strings.ToLower(strings.TrimSpace(c.Approval)) {
+	case mcpApprovalAllow:
+		return mcpApprovalAllow
+	case mcpApprovalBlock:
+		return mcpApprovalBlock
+	default:
+		return mcpApprovalAsk
+	}
+}
+
+// wantsTool reports whether an advertised tool survives the allow-list.
+func (c MCPServerConfig) wantsTool(name string) bool {
+	if len(c.Tools) == 0 {
+		return true
+	}
+	for _, want := range c.Tools {
+		if strings.EqualFold(strings.TrimSpace(want), name) {
+			return true
+		}
+	}
+	return false
+}
+
+// toolTimeout is the cap for one call on this server.
+func (c MCPServerConfig) toolTimeout() time.Duration {
+	if c.TimeoutSec <= 0 {
+		return mcpToolTimeout
+	}
+	return time.Duration(clampInt(c.TimeoutSec, 1, 3600)) * time.Second
 }
 
 // commandLine is the entry as one line, for the banner, the status endpoint and
@@ -134,14 +194,34 @@ func normalizeMCPServers(in []MCPServerConfig) ([]MCPServerConfig, []string) {
 			errs = append(errs, bad...)
 			continue
 		}
+		// A misspelled policy would silently fall back to "ask", which reads as
+		// the setting having no effect; it is refused instead, by name.
+		approval := strings.ToLower(strings.TrimSpace(s.Approval))
+		if approval != "" && approval != mcpApprovalAsk && approval != mcpApprovalAllow && approval != mcpApprovalBlock {
+			errs = append(errs, fmt.Sprintf("mcp server %q: approval is %q, which is not one of \"ask\", \"allow\" or \"block\"", name, s.Approval))
+			continue
+		}
+		if s.TimeoutSec < 0 || s.TimeoutSec > 3600 {
+			errs = append(errs, fmt.Sprintf("mcp server %q: timeout_sec must be between 1 and 3600 (or 0 for the default)", name))
+			continue
+		}
 		seen[key] = true
+		var tools []string
+		for _, t := range s.Tools {
+			if t = strings.TrimSpace(t); t != "" {
+				tools = append(tools, t)
+			}
+		}
 		out = append(out, MCPServerConfig{
-			Name:     name,
-			Command:  command,
-			Args:     s.Args,
-			Env:      s.Env,
-			Dir:      strings.TrimSpace(s.Dir),
-			Disabled: s.Disabled,
+			Name:       name,
+			Command:    command,
+			Args:       s.Args,
+			Env:        s.Env,
+			Dir:        strings.TrimSpace(s.Dir),
+			Disabled:   s.Disabled,
+			Approval:   approval,
+			Tools:      tools,
+			TimeoutSec: s.TimeoutSec,
 		})
 	}
 	return out, errs
@@ -275,7 +355,7 @@ func startMCPClient(ctx context.Context, cfg MCPServerConfig) (*mcpClient, error
 	// a server needs PATH (and whatever the entry names below), not the model
 	// API key. The entry's own Env is appended after, so it can set or override.
 	cmd.Env = append(scrubbedEnv(), cfg.Env...)
-	cmd.SysProcAttr = mcpSysProcAttr()
+	cmd.SysProcAttr = noConsoleSysProcAttr()
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -403,7 +483,7 @@ func (c *mcpClient) request(ctx context.Context, method string, params any, out 
 		case <-ctx.Done():
 			c.forget(id)
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return fmt.Errorf("%s did not answer %s in time", c.cfg.Name, method)
+				return fmt.Errorf("%s did not answer %s in time (its own limit is %s; raise timeout_sec for that server if it needs longer)", c.cfg.Name, method, c.cfg.toolTimeout())
 			}
 			return fmt.Errorf("%s: %s was cancelled before the server answered", c.cfg.Name, method)
 		case <-t.C:
@@ -597,7 +677,7 @@ func (c *mcpClient) callTool(ctx context.Context, tool, rawArgs string, poke fun
 		args = json.RawMessage(s)
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, mcpToolTimeout)
+	ctx, cancel := context.WithTimeout(ctx, c.cfg.toolTimeout())
 	defer cancel()
 
 	var res struct {
@@ -725,7 +805,8 @@ func wireName(server, tool string, taken map[string]mcpTarget) string {
 // validates the arguments. What is repaired here is only the shape the tool API
 // insists on: parameters an object, required an array - never null, which the
 // API rejects with "null is not of type array" before it looks at the messages.
-func mcpToolSchema(server string, tool mcpTool) map[string]any {
+func mcpToolSchema(cfg MCPServerConfig, tool mcpTool) map[string]any {
+	server := cfg.Name
 	params := map[string]any{
 		"type":       "object",
 		"properties": map[string]any{},
@@ -751,6 +832,16 @@ func mcpToolSchema(server string, tool mcpTool) map[string]any {
 	if desc == "" {
 		desc = "no description was given by the server"
 	}
+	// The policy is part of what the model is told: a call on a server set to
+	// "allow" will not stop for a card, and a call on one set to "block" is
+	// refused before it leaves the agent, so the model plans around it instead
+	// of spending a step discovering it.
+	switch cfg.approval() {
+	case mcpApprovalAllow:
+		desc += " (this server is trusted: the call runs without asking.)"
+	case mcpApprovalBlock:
+		desc += " (this server is blocked: the call will be refused.)"
+	}
 	// The name of the server is part of the contract: the model has to be able to
 	// tell which process it is asking, and the approval card says the same name.
 	desc = "[MCP " + server + "] " + desc
@@ -773,6 +864,19 @@ type mcpStatus struct {
 	PID      int    `json:"pid,omitempty"`
 	Disabled bool   `json:"disabled,omitempty"`
 	Error    string `json:"error,omitempty"`
+	// ToolNames is what the server advertises, in its own order. The model sees
+	// them as mcp__<server>__<tool>; the MCP pane shows the plain names on hover,
+	// because "7 tools" does not say whether the one you want is there.
+	ToolNames []string `json:"tool_names,omitempty"`
+}
+
+// toolNames lists what a client advertises, for the status report.
+func (c *mcpClient) toolNames() []string {
+	names := make([]string, 0, len(c.tools))
+	for _, t := range c.tools {
+		names = append(names, t.Name)
+	}
+	return names
 }
 
 // mcpManager owns the server processes for one agent.
@@ -900,13 +1004,17 @@ func (m *mcpManager) refresh(ctx context.Context, list []MCPServerConfig, force 
 		status.Connected = true
 		status.Tools = len(client.tools)
 		status.PID = client.pid()
+		status.ToolNames = client.toolNames()
 		statuses = append(statuses, status)
 
 		for i := range client.tools {
 			t := &client.tools[i]
+			if !cfg.wantsTool(t.Name) {
+				continue
+			}
 			t.wire = wireName(cfg.Name, t.Name, wire)
 			wire[t.wire] = mcpTarget{server: cfg.Name, tool: t.Name}
-			schemas = append(schemas, mcpToolSchema(cfg.Name, *t))
+			schemas = append(schemas, mcpToolSchema(cfg, *t))
 		}
 	}
 
@@ -916,6 +1024,27 @@ func (m *mcpManager) refresh(ctx context.Context, list []MCPServerConfig, force 
 	m.toolset = schemas
 	m.statuses = statuses
 	m.mu.Unlock()
+}
+
+// serverOf names the configured server that advertised a wire name, or "" for
+// a name this agent never routed. It is how the per-server policy is found from
+// a tool call.
+func (m *mcpManager) serverOf(wire string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.wire[wire].server
+}
+
+// configOf returns the configured entry for one server.
+func (m *mcpManager) configOf(name string) (MCPServerConfig, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, cfg := range m.list {
+		if cfg.Name == name {
+			return cfg, true
+		}
+	}
+	return MCPServerConfig{}, false
 }
 
 // schemas is the tool list to append to the built-in one.
@@ -953,6 +1082,7 @@ func (m *mcpManager) status() []mcpStatus {
 				out[i].Connected = false
 				out[i].Tools = 0
 				out[i].PID = 0
+				out[i].ToolNames = nil
 				if out[i].Error == "" {
 					out[i].Error = "it is not running"
 				}
@@ -963,12 +1093,14 @@ func (m *mcpManager) status() []mcpStatus {
 			out[i].Connected = false
 			out[i].Tools = 0
 			out[i].PID = 0
+			out[i].ToolNames = nil
 			out[i].Error = redact(err.Error())
 			continue
 		}
 		out[i].Connected = true
 		out[i].Tools = len(c.tools)
 		out[i].PID = c.pid()
+		out[i].ToolNames = c.toolNames()
 		out[i].Error = ""
 	}
 	return out
@@ -1047,9 +1179,12 @@ func (m *mcpManager) rebuildLocked() {
 		}
 		for i := range client.tools {
 			tool := &client.tools[i]
+			if !cfg.wantsTool(tool.Name) {
+				continue
+			}
 			tool.wire = wireName(cfg.Name, tool.Name, m.wire)
 			m.wire[tool.wire] = mcpTarget{server: cfg.Name, tool: tool.Name}
-			schemas = append(schemas, mcpToolSchema(cfg.Name, *tool))
+			schemas = append(schemas, mcpToolSchema(cfg, *tool))
 		}
 	}
 	m.toolset = schemas
@@ -1103,6 +1238,7 @@ func (m *mcpManager) revive(ctx context.Context, name string) error {
 			s.Connected = false
 			s.Tools = 0
 			s.PID = 0
+			s.ToolNames = nil
 			s.Error = reason
 		})
 		return err
@@ -1120,6 +1256,7 @@ func (m *mcpManager) revive(ctx context.Context, name string) error {
 		s.Connected = true
 		s.Tools = len(client.tools)
 		s.PID = client.pid()
+		s.ToolNames = client.toolNames()
 		s.Error = ""
 	})
 	return nil
@@ -1159,6 +1296,7 @@ func (m *mcpManager) stopServer(name string) error {
 		s.Connected = false
 		s.Tools = 0
 		s.PID = 0
+		s.ToolNames = nil
 		s.Error = "stopped on request"
 	})
 	return nil

@@ -48,6 +48,14 @@ type Config struct {
 	// connects to one over the network on its own.
 	MCPServers []MCPServerConfig `json:"mcp_servers,omitempty"`
 
+	// Effort is how much deliberation a task gets before it acts, and it is the
+	// answer to a plain instruction costing five steps. "direct" tells the model
+	// to do what was asked with the fewest calls and not investigate first;
+	// "thorough" keeps the full plan-investigate-verify loop; "balanced" is the
+	// default and the one an ambiguous request deserves. It changes the prompt,
+	// nothing else: every tool, every limit and every approval stays the same.
+	Effort string `json:"effort,omitempty"`
+
 	// AutoApprove skips the per-tool approval prompt (run_shell, write_file).
 	// Dangerous: the agent then runs unattended. Set from Safety in Settings.
 	AutoApprove bool `json:"auto_approve"`
@@ -153,6 +161,7 @@ func defaultConfig() *Config {
 	return &Config{
 		Provider:        string(prov.ID),
 		Model:           prov.Model,
+		Effort:          effortBalanced,
 		MaxSteps:        25,
 		NotifyDanger:    true,
 		IdleTimeoutSec:  defaultIdleTimeoutSec,
@@ -206,6 +215,7 @@ func loadConfig() *Config {
 	if c.Model == "" {
 		c.Model = providerFor(c.Provider).Model
 	}
+	c.Effort = normalizeEffort(c.Effort)
 	if c.MaxSteps <= 0 {
 		c.MaxSteps = 25
 	}
@@ -377,19 +387,22 @@ type configView struct {
 	// KeyEnv and ProviderURL are what the pane needs to explain itself: which
 	// variable can hold the key and which endpoint the provider would use. None
 	// of this is secret - the key itself never appears here.
-	KeyEnv          string     `json:"key_env"`
-	ProviderURL     string     `json:"provider_url"`
-	BaseURL         string     `json:"base_url"`
-	Models          []string   `json:"models"`
-	Providers       []provider `json:"providers"`
-	WorkDir         string     `json:"workdir"`
-	MaxSteps        int        `json:"max_steps"`
-	AutoApprove     bool       `json:"auto_approve"`
-	NotifyAny       bool       `json:"notify_any"`
-	NotifyDanger    bool       `json:"notify_danger"`
-	IdleTimeoutSec  int        `json:"idle_timeout_sec"`
-	RunTimeoutMin   int        `json:"run_timeout_min"`
-	ShellTimeoutSec int        `json:"shell_timeout_sec"`
+	KeyEnv      string     `json:"key_env"`
+	ProviderURL string     `json:"provider_url"`
+	BaseURL     string     `json:"base_url"`
+	Models      []string   `json:"models"`
+	Providers   []provider `json:"providers"`
+	WorkDir     string     `json:"workdir"`
+	MaxSteps    int        `json:"max_steps"`
+	// Effort is the deliberation level the prompt carries (direct, balanced,
+	// thorough). The browser shows it as a three-way switch in the Agent pane.
+	Effort          string `json:"effort"`
+	AutoApprove     bool   `json:"auto_approve"`
+	NotifyAny       bool   `json:"notify_any"`
+	NotifyDanger    bool   `json:"notify_danger"`
+	IdleTimeoutSec  int    `json:"idle_timeout_sec"`
+	RunTimeoutMin   int    `json:"run_timeout_min"`
+	ShellTimeoutSec int    `json:"shell_timeout_sec"`
 	// MCPServers is the configured server list, verbatim: it is the user's own
 	// file, and unlike the API key it is meant to be edited from the settings
 	// pane. Any token an entry carries in env is the user's, not this agent's.
@@ -415,6 +428,7 @@ func viewOf(c *Config) configView {
 		Providers:       providers,
 		WorkDir:         c.WorkDir,
 		MaxSteps:        c.MaxSteps,
+		Effort:          normalizeEffort(c.Effort),
 		AutoApprove:     c.AutoApprove,
 		NotifyAny:       c.NotifyAny,
 		NotifyDanger:    c.NotifyDanger,
@@ -465,9 +479,12 @@ type configPatch struct {
 	// MCPServers replaces the whole list: the settings pane edits it as one
 	// document, and merging entries by name would make a rename look like a
 	// different server.
-	MCPServers  *[]MCPServerConfig `json:"mcp_servers"`
-	APIKey      *string            `json:"api_key"`
-	ClearAPIKey *bool              `json:"clear_api_key"`
+	MCPServers *[]MCPServerConfig `json:"mcp_servers"`
+	// Effort switches the deliberation level. It is a plain string for the same
+	// reason the provider is: an unknown value must fall back, not fail.
+	Effort      *string `json:"effort"`
+	APIKey      *string `json:"api_key"`
+	ClearAPIKey *bool   `json:"clear_api_key"`
 }
 
 // applyPatch mutates the config and persists it.
@@ -610,6 +627,9 @@ func applyPatch(c *Config, p configPatch) error {
 		}
 	}
 
+	if p.Effort != nil {
+		c.Effort = normalizeEffort(*p.Effort)
+	}
 	if p.MCPServers != nil {
 		cleaned, problems := normalizeMCPServers(*p.MCPServers)
 		if len(problems) > 0 {
@@ -717,6 +737,15 @@ func (c *Config) shellTimeout() time.Duration {
 		secs = defaultShellTimeoutSec
 	}
 	return time.Duration(clampInt(secs, minShellTimeoutSec, maxShellTimeoutSec)) * time.Second
+}
+
+// effort is the deliberation level the next task runs at. Read at the top of a
+// run like shellTimeout, so a Save applies to the next task and never moves the
+// posture of one already in flight.
+func (c *Config) effort() string {
+	cfgMu.Lock()
+	defer cfgMu.Unlock()
+	return normalizeEffort(c.Effort)
 }
 
 // mcpServers returns the configured MCP server list. It is a copy, taken under

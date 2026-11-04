@@ -26,10 +26,17 @@ func requireWindows(t *testing.T) {
 // close. It uses Notepad because every Windows box has it and it is never the
 // agent's own window.
 //
-// Skipped in short mode: it starts and closes a real application.
+// Skipped in short mode, and skipped unless DSAGENT_WINDOW_E2E=1. This one opens
+// and closes a real Notepad window, so on a plain `go test ./...` - the command an
+// agent runs to prove a build - it made a window flash over whatever the user was
+// doing. TestDesktopToastShows is opt-in for the same reason: a test suite must not
+// take over the desktop it happens to be running on.
 func TestWindowSequenceEndToEnd(t *testing.T) {
 	if testing.Short() {
 		t.Skip("starts a real application")
+	}
+	if os.Getenv("DSAGENT_WINDOW_E2E") != "1" {
+		t.Skip("set DSAGENT_WINDOW_E2E=1 to open and close a real window")
 	}
 	requireWindows(t)
 

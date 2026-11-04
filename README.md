@@ -119,6 +119,7 @@ Stored in `config.json` under the OS config directory:
 | `base_url` | *(the provider's endpoint)* | full chat-completions URL that replaces the provider's own |
 | `workdir` | directory dsagent was first started in | sandbox root for every tool |
 | `max_steps` | `25` | tool-call budget per task (form allows up to 200) |
+| `effort` | `balanced` | how much a task deliberates before it acts: `direct`, `balanced` or `thorough` - see [Task effort](#task-effort) |
 | `auto_approve` | `false` | skip approval cards for non-dangerous calls |
 | `notify_any` | `false` | Windows notification for every `run_shell` command |
 | `notify_danger` | `true` | Windows notification for dangerous commands only |
@@ -147,6 +148,31 @@ the environment variable and keep nothing on disk.
 | Agent | all tools | everything, each mutating call behind an approval card |
 | Plan | every tool but the mutating ones | reads and investigates; `run_shell` always prompts, `write_file` and `window_control` are not offered |
 | Ask | read-only tools | answers questions, changes nothing; `list_windows` still asks before it lists what you have open |
+
+## Task effort
+
+The complaint this answers: a one-line instruction - "shoot that enemy", "open
+this page", "where is X" - should not cost five steps of surveying. `effort` is
+how much deliberation a task gets, and it is a setting because the right answer
+depends on what you are doing with the agent today.
+
+| value | what the prompt tells the model |
+|---|---|
+| `direct` | The instruction is an action: make the call on the first step, do not survey, do not test, do not plan out loud. Verification of a change to your code still happens - writing files and running commands still end with the command that proves the result. A task that turns out to be genuinely complex switches to the thorough approach and says so. |
+| `balanced` (default) | Match the work to the request: a plain action is one call, a change to your code is looked at, made and verified. A task that is a conversation (a game move, a choice) uses `ask_user` and keeps state instead of re-deriving what you already said. |
+| `thorough` | Read the surrounding code, state the plan, change, verify, report the evidence - even when the change looks small. |
+
+Settings > Agent switches it, and it applies to the next task immediately. It
+changes the system prompt and nothing else: the same tools, the same limits, the
+same approval cards and the same risk classifier apply at every level. "Be
+quick" must never be a way to make a destructive call easier to reach.
+
+Effort is not the only lever for a short interactive task. A run that needs an
+answer can stay in one run with `ask_user` instead of ending:
+
+| tool | what it does |
+|---|---|
+| `ask_user` | Asks a question and waits. The run pauses - it does not finish - and the answer arrives as the tool result, so "your move" or "which file did you mean" costs one step instead of a fresh task, a fresh plan and the thread of the conversation. Suggested options are drawn as buttons; the field is still there. It never asks for approval, because there is nothing to approve. |
 
 ## Images and the screen
 
@@ -228,6 +254,35 @@ and it is stopped when the agent stops.
 | `env` | extra `NAME=value` entries on top of your environment |
 | `dir` | the server's working directory; empty inherits the agent's |
 | `disabled` | keeps an entry configured without starting it |
+| `approval` | `ask` (default), `allow` or `block` - the per-server rule for the permission card |
+| `tools` | an allow-list of tool names; empty means every tool the server advertises |
+| `timeout_sec` | cap on one call to this server, 1-3600; empty means the built-in ten minutes |
+
+Those last three are the settings that make a server pleasant rather than
+merely possible, and each one answers a specific annoyance:
+
+- **`approval`** is the one a server earns over time. A browser driver you trust
+  to read pages should not cost a click per step, while a file-system server
+  pointed at a real folder should keep asking. `allow` runs that server's calls
+  without the card **in Agent mode only** - Plan and Ask still refuse them -
+  and `block` stops offering the tools at all, so the model never spends a step
+  on a call that will be refused. A server set to `allow` says so in its tool
+  descriptions, so the model plans around the missing card instead of being
+  surprised by it.
+- **`tools`** is the fix for a server that advertises forty tools and gets the
+  wrong one picked. Name the four that matter and the rest are not in the
+  request at all.
+- **`timeout_sec`** is per server because "how long may this take" is a property
+  of the server and not of the agent: a screenshot is seconds, a browser
+  automation run is minutes, and the built-in ten-minute cap is wrong for both
+  ends.
+
+The settings are edited in the MCP pane: one row per configured server with its
+state, its tool count and its policy chip, and a **Settings** button that folds
+out the three fields. **Apply and reload** patches the saved list and reloads the
+catalogue - a filter and a deadline only mean something to a catalogue built from
+them. They are the same fields in `config.json`, so a hand edit and the pane
+cannot disagree.
 
 Settings > Agent edits the same list as one JSON document, with a **Reload
 servers** button beside it - that button, and `POST /api/mcp`, is how a
@@ -275,8 +330,13 @@ flashes a console window over what you are doing.
   activity list for the current one, and the composer carries the Agent / Plan /
   Ask switch.
 - `Ctrl+K` is the command palette, `Ctrl+,` opens Settings (Connection, Agent,
-  Interface, Safety, Data, About), `Ctrl+O` opens the workspace window, `F1`
+  MCP, Interface, Safety, Data, About), `Ctrl+O` opens the workspace window, `F1`
   lists every binding.
+- **Settings > MCP** is the servicedesk for the servers: what is configured,
+  what is running, how many tools each contributes, start/stop/restart per
+  server, the per-server settings above, and the JSON list itself. The agent's
+  own `mcp_control` tool offers the same three actions, so the pane and the tool
+  cannot drift.
 - The Interface pane holds browser preferences only - Enter sends, timestamps,
   follow the run, fold successful tool cards, warn before closing mid-run, a
   chime - and they never travel to the model.

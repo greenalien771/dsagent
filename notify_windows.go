@@ -64,14 +64,30 @@ func desktopToast(title, body string) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
+	_ = toastCommand(ctx, script, xmlPath).Run()
+}
+
+// toastCommand builds the PowerShell that shows the toast: the command line, the
+// scrubbed environment, and the one creation flag that keeps the notification
+// from touching the window the user is working in.
+//
+// That flag is the whole point. A console program started with no creation flags
+// of its own inherits its parent's console *window*, so "-WindowStyle Hidden"
+// does not hide a new window - it clears WS_VISIBLE on the window already on
+// screen. That window belongs to the shell dsagent was launched from, and the
+// result is exactly what it looks like: the terminal disappears while its
+// process keeps running. noConsoleSysProcAttr gives the child a console of its
+// own that is never shown, so the visible window is not touched.
+func toastCommand(ctx context.Context, script, xmlPath string) *exec.Cmd {
 	c := exec.CommandContext(ctx, "powershell",
 		"-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
 		"-File", script, "-Xml", xmlPath, "-AppId", toastAppID)
 	c.Env = scrubbedEnv()
+	c.SysProcAttr = noConsoleSysProcAttr()
 	// A hidden PowerShell that leaves something behind must not keep this
 	// goroutine alive forever.
 	c.WaitDelay = 3 * time.Second
-	_ = c.Run()
+	return c
 }
 
 // toastXML is the ToastText02 template: a bold title and one wrapped body line.

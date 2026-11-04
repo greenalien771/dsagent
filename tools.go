@@ -65,6 +65,13 @@ func toolSchemas(mode string) []map[string]any {
 			"until":      map[string]any{"type": "string", "enum": []string{"appear", "gone"}, "description": "condition to wait for, default appear"},
 			"timeout_ms": map[string]any{"type": "integer", "description": "give up after this long, default 10000"}}, nil),
 
+		// ask_user is the one tool that stops the run until a human answers. It
+		// writes nothing, so every posture gets it: a plan or an answer often needs
+		// one fact only the user has, and asking in prose costs a whole new task.
+		fn("ask_user", `Ask the user a question and wait for the answer. The run pauses - it does not end - and the answer arrives as this tool's result, so a short interactive task (a game move, a choice, "which file did you mean") stays one task instead of costing a new one. Ask one thing at a time, and only what you cannot find out yourself. Do not use it to ask permission for another tool call: the approval card does that.`, map[string]any{
+			"question": map[string]any{"type": "string", "description": "the question, one sentence, answerable in a word or a line"},
+			"options":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "optional suggested answers, shown as buttons; the user may still type something else"}}, []string{"question"}),
+
 		fn("screenshot", `Capture an image you can then look at: the whole screen, one region, or one window. Pass window (a title substring, or an hwnd from list_windows) to capture just that window, even when it is minimized or behind others - the user does not have to open or focus it; x/y are then offsets inside it. Pass x/y/width/height to grab only one region: that is how you zoom in on a dialog, an error box or a chart instead of guessing from a full-screen picture. Pass scale (0.1-1) to shrink a big region so it costs fewer tokens. The image appears on the step after this call.`, map[string]any{
 			"x":      map[string]any{"type": "integer", "description": "left edge in screen pixels, default 0"},
 			"y":      map[string]any{"type": "integer", "description": "top edge in screen pixels, default 0"},

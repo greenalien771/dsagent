@@ -835,6 +835,78 @@
        the preference without being rebuilt. */
     body.no-ts .msg-head .ts { display: none; }
 
+    /* --- MCP servers ------------------------------------------------ */
+    /* One row per configured server, in the MCP pane: the dot is the state, the
+       meta line is what the agent said about it, and the buttons act on that one
+       server without waiting for the next task. */
+    .mcp-list { display: flex; flex-direction: column; gap: 6px; }
+    .mcp-list.busy { opacity: .6; pointer-events: none; }
+    .mcp-row {
+      display: flex; align-items: center; gap: 8px; min-width: 0;
+      border: 1px solid var(--border); background: var(--bg); border-radius: 6px;
+      padding: 7px 9px; font-size: 11.5px;
+    }
+    .mcp-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted-2); flex-shrink: 0; }
+    .mcp-dot.running { background: var(--success-text); }
+    .mcp-dot.stopped { background: var(--danger); }
+    .mcp-name { font-family: var(--mono); font-size: 11.5px; color: var(--text); flex-shrink: 0; }
+    .mcp-meta {
+      flex: 1; min-width: 0; color: var(--muted-2); font-size: 11px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .mcp-btns { display: flex; gap: 4px; flex-shrink: 0; }
+    .mcp-btns button { padding: 3px 8px; font-size: 10.5px; }
+
+    /* Task effort: three buttons, the current one lit. It is a setting with a
+       consequence the user has to be able to see at a glance, not a hidden knob. */
+    .effort-picks { display: flex; gap: 5px; flex-wrap: wrap; }
+    .effort-picks button {
+      padding: 5px 13px; border-radius: 6px; font-size: 11.5px; font-weight: 550;
+      border: 1px solid var(--border); color: var(--muted-2); background: transparent;
+    }
+    .effort-picks button:hover { border-color: var(--border-2); color: var(--text-2); background: var(--hover); }
+    .effort-picks button.active { background: var(--panel-3); border-color: var(--border-2); color: var(--text); }
+
+    /* Per-server settings inside an MCP row: folded away until asked for, so the
+       list stays a list of servers. */
+    .mcp-row { flex-wrap: wrap; }
+    .mcp-cfg { display: none; width: 100%; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+    .mcp-row.open .mcp-cfg { display: block; }
+    .mcp-cfg-row { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; font-size: 11px; color: var(--muted-2); }
+    .mcp-cfg-row label { width: 74px; flex-shrink: 0; text-transform: uppercase; letter-spacing: .6px; font-size: 9.5px; }
+    .mcp-cfg-row input, .mcp-cfg-row select {
+      flex: 1; min-width: 0; padding: 4px 7px; font-size: 11px; font-family: var(--mono);
+      background: var(--code-bg); border: 1px solid var(--border-2); border-radius: 5px; color: var(--text); outline: none;
+    }
+    .mcp-cfg-row select { font-family: inherit; }
+    .mcp-cfg-row input:focus, .mcp-cfg-row select:focus { border-color: var(--accent); }
+    .mcp-policy { font-size: 9.5px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted-2); border: 1px solid var(--border); border-radius: 20px; padding: 1px 7px; flex-shrink: 0; }
+    .mcp-policy.allow { color: var(--success-text); border-color: rgba(126, 163, 122, .45); }
+    .mcp-policy.block { color: var(--danger-text); border-color: rgba(183, 125, 122, .45); }
+
+    /* --- a question from the run (ask_user) -------------------------- */
+    /* Deliberately not the approval card: nothing is being authorised here, the
+       run has simply stopped to ask something only the user can answer. */
+    .question { border: 1px solid var(--border-2); background: var(--panel); border-radius: var(--radius); padding: 12px 13px; animation: fade-up .2s var(--ease); }
+    .tool-sec.ap-slot .question { border: none; border-radius: 0; padding: 10px 11px; animation: none; }
+    .question .q-head { display: flex; align-items: center; gap: 7px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .7px; color: var(--accent); }
+    .question .q-head svg { width: 13px; height: 13px; }
+    .question .q-body { margin-top: 8px; font-size: 13px; line-height: 1.55; color: var(--text); white-space: pre-wrap; word-break: break-word; }
+    .question .q-body.q-given { font-family: var(--mono); font-size: 12px; color: var(--text-2); }
+    .question .q-opts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .question .q-opt { padding: 4px 11px; border-radius: 20px; border: 1px solid var(--border-2); color: var(--text-2); font-size: 11.5px; }
+    .question .q-opt:hover { background: var(--hover); color: var(--text); }
+    .question .q-answer { display: flex; gap: 7px; margin-top: 10px; }
+    .question .q-input {
+      flex: 1; padding: 6px 9px; font-size: 12px; color: var(--text);
+      background: var(--code-bg); border: 1px solid var(--border-2); border-radius: 6px; outline: none;
+    }
+    .question .q-input:focus { border-color: var(--accent); }
+    .question .q-send { padding: 5px 12px; border-radius: 6px; font-size: 11.5px; font-weight: 550; background: var(--accent-2); color: var(--on-accent); }
+    .question .q-send:hover { background: var(--accent); }
+    .question .q-note { margin-top: 9px; font-size: 10.5px; color: var(--muted-2); }
+    .live-row[data-kind="question"] { color: var(--accent); }
+
     /* --- danger approval --- */
     .approval.danger { border-color: rgba(183, 125, 122, .42); background: var(--danger-soft); }
     .approval.danger .ap-head { color: var(--danger-text); }
@@ -1248,6 +1320,7 @@
       <nav class="sw-nav" id="swNav">
         <button data-sec="conn" class="active" onclick="settingsSection('conn')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="7.5" cy="15.5" r="4.5"></circle><path d="M10.7 12.3 19 4l2 2-2 2 1.5 1.5-2 2L17 10l-2.3 2.3"></path></svg> Connection</button>
         <button data-sec="agent" onclick="settingsSection('agent')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="8" width="16" height="12" rx="2"></rect><path d="M12 4v4M9 14h.01M15 14h.01"></path></svg> Agent</button>
+        <button data-sec="mcp" onclick="settingsSection('mcp')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="7" height="7" rx="1.5"></rect><rect x="14" y="4" width="7" height="7" rx="1.5"></rect><rect x="8.5" y="15" width="7" height="6" rx="1.5"></rect></svg> MCP</button>
         <button data-sec="interface" onclick="settingsSection('interface')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"></rect><line x1="3" y1="10" x2="21" y2="10"></line><line x1="9" y1="10" x2="9" y2="20"></line></svg> Interface</button>
         <button data-sec="safety" onclick="settingsSection('safety')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l7 3v6c0 4.2-2.9 7.6-7 9-4.1-1.4-7-4.8-7-9V6z"></path><path d="M9 12l2 2 4-4"></path></svg> Safety</button>
         <button data-sec="data" onclick="settingsSection('data')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M6 6l1 14h10l1-14"></path></svg> Data</button>
@@ -1306,6 +1379,16 @@
           </div>
 
           <div class="sw-field">
+            <label class="lbl">Task effort</label>
+            <div class="effort-picks" id="cfg-effort">
+              <button type="button" data-effort="direct" onclick="setEffort('direct')">Direct</button>
+              <button type="button" data-effort="balanced" onclick="setEffort('balanced')">Balanced</button>
+              <button type="button" data-effort="thorough" onclick="setEffort('thorough')">Thorough</button>
+            </div>
+            <div class="key-hint"><b>Direct</b>: a plain instruction is an action - one tool call, then the report. "Shoot the enemy" shoots. <b>Balanced</b>: match the work to the request, and use <code>ask_user</code> for a conversation. <b>Thorough</b>: read, plan, change, verify - the full loop even when the change looks small. It only changes how much the model deliberates: every tool, limit and approval is exactly the same. Applies immediately.</div>
+          </div>
+
+          <div class="sw-field">
             <label class="lbl" for="cfg-idle">Idle timeout (seconds)</label>
             <input type="number" id="cfg-idle" min="10" max="1800" step="10">
             <div class="key-hint">A run that produces no output for this long is treated as stuck and cancelled. Allowed range: 10-1800.</div>
@@ -1344,21 +1427,40 @@
             </div>
           </div>
 
-          <div class="sw-field">
-            <label class="lbl" for="cfg-mcp">MCP servers (JSON)</label>
-            <textarea id="cfg-mcp" rows="6" spellcheck="false" placeholder='[{"name":"fs","command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","C:\\work"]}]'></textarea>
-            <div class="key-hint">Model Context Protocol servers this agent can call as extra tools. One object per server: <code>name</code> and <code>command</code>, plus optional <code>args</code>, <code>env</code> (<code>"NAME=value"</code>) and <code>dir</code>. Their tools are offered in Agent mode only, and every call asks first unless Always Allow is on. A server starts with the next task, so a typo shows up in the status line instead of as a tool that never worked.</div>
-            <div class="sw-actions">
-              <button type="button" class="btn-sm ghost" onclick="reloadMCP()">Reload servers</button>
-              <button type="button" class="btn-sm ghost" onclick="stopMCP()">Stop servers</button>
-              <span class="pref-hint" id="mcpState" style="margin:0">-</span>
-            </div>
-          </div>
 
           <div class="sw-card">
             <h5><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg> Run watchdog</h5>
             <p>The server watches every run. A task that produces no output for <b id="wdIdle">2 minutes</b>, or that runs longer than <b id="wdRun">25 minutes</b>, is cancelled automatically and the busy flag is released. Both numbers are the fields above; the Stop button escalates on its own if a run will not unwind.</p>
             <p style="margin-top:8px">This is not the same knob as <b>Shell command timeout</b> above: that one kills a single command (<b id="wdShell">60 seconds</b>), while these two end the whole task.</p>
+          </div>
+        </section>
+
+        <!-- ----------------------------------------------------------- MCP -->
+        <section class="sw-pane" id="sec-mcp">
+          <h4>MCP servers</h4>
+          <div class="sw-desc">Model Context Protocol servers this agent can call as extra tools. Each one is a child process of dsagent, started at launch and stopped with it; their tools arrive as <code>mcp__&lt;server&gt;__&lt;tool&gt;</code> and are offered in Agent mode only.</div>
+
+          <div class="sw-field">
+            <label class="lbl">Running now</label>
+            <div class="mcp-list" id="mcpServers"><span class="pref-hint">-</span></div>
+            <div class="sw-actions">
+              <button type="button" class="btn-sm ghost" onclick="reloadMCP()">Reload all</button>
+              <button type="button" class="btn-sm ghost" onclick="stopMCP()">Stop all</button>
+              <span class="pref-hint" id="mcpState" style="margin:0">-</span>
+            </div>
+            <div class="key-hint">Reload starts every enabled server from what is <b>saved</b>, not from the box below it. Stop closes stdin first and kills a server only if it ignores that; the server then stays down - the automatic restart a crashed server gets does not undo it - until Start or Reload. None of these buttons needs a task running.</div>
+          </div>
+
+          <div class="sw-field">
+            <label class="lbl" for="cfg-mcp">Configuration (JSON)</label>
+            <textarea id="cfg-mcp" rows="8" spellcheck="false" placeholder='[{"name":"fs","command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","C:\\work"]}]'></textarea>
+            <div class="key-hint">One object per server: <code>name</code> and <code>command</code>, plus optional <code>args</code>, <code>env</code> (<code>"NAME=value"</code>), <code>dir</code> and <code>disabled</code>. Blank means no servers. A list that does not validate is refused on Save instead of being partly applied, and the next task starts from it.</div>
+          </div>
+
+          <div class="sw-card">
+            <h5><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l7 3v6c0 4.2-2.9 7.6-7 9-4.1-1.4-7-4.8-7-9V6z"></path><path d="M9 12l2 2 4-4"></path></svg> What a call costs</h5>
+            <p>A tool from a server is gated like <code>run_shell</code>: every call asks first, the card names the server, and <b>Always Allow</b> covers it in Agent mode only. Plan and Ask refuse it in words, because a tool that runs someone else's code cannot promise it changed nothing. The answer comes back as text and is truncated like any other result.</p>
+            <p style="margin-top:8px">A server that dies mid-call is noticed when its output ends, and the call fails with the end of its stderr instead of hanging until the tool timeout. The next call starts it once; a server that keeps failing is left alone for a few seconds rather than respawned on every call.</p>
           </div>
         </section>
 
@@ -1501,6 +1603,7 @@
             <div class="sw-kv"><span class="k">Step limit</span><span class="v" id="aboutSteps">-</span></div>
             <div class="sw-kv"><span class="k">Tools</span><span class="v">list_dir, read_file, read_image, write_file, run_shell, web_fetch</span></div>
             <div class="sw-kv"><span class="k">Approval API</span><span class="v">/api/approve</span></div>
+            <div class="sw-kv"><span class="k">Answer API</span><span class="v">/api/answer</span></div>
             <div class="sw-kv"><span class="k">Run control</span><span class="v">/api/stop, /api/abort, /api/status</span></div>
           </div>
         </section>
@@ -1831,7 +1934,11 @@ const TOOL_ICONS = {
   write_file: '<path d="M12 20h9"></path><path d="M16.6 3.6a2.1 2.1 0 0 1 3 3L7.5 18.7 3 20l1.3-4.5z"></path>',
   run_shell: '<path d="M4 7l5 5-5 5"></path><path d="M12 17h8"></path>',
   read_image: '<rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline>',
-  web_fetch: '<circle cx="12" cy="12" r="9"></circle><path d="M3 12h18"></path><path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18z"></path>'
+  web_fetch: '<circle cx="12" cy="12" r="9"></circle><path d="M3 12h18"></path><path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18z"></path>',
+  // A question mark for the one tool that waits for a human, and three blocks
+  // for mcp_control, the agent's own handle on the servers.
+  ask_user: '<circle cx="12" cy="12" r="9"></circle><path d="M9.6 9.2a2.5 2.5 0 1 1 3.2 2.4c-.6.2-.8.7-.8 1.2v.4"></path><line x1="12" y1="16.4" x2="12.01" y2="16.4"></line>',
+  mcp_control: '<rect x="3" y="4" width="7" height="7" rx="1.5"></rect><rect x="14" y="4" width="7" height="7" rx="1.5"></rect><rect x="8.5" y="15" width="7" height="6" rx="1.5"></rect>'
 };
 
 // toolIcon returns the markup for a tool glyph; `name` is the tool name.
@@ -3003,6 +3110,107 @@ function askApproval(sess, req, host) {
   scrollToBottom();
 }
 
+// A question from the run (ask_user). `req` is { id, question, options[] }.
+//
+// The run is parked on it, so the answer goes to /api/answer and NOT to the
+// composer: a message there would start a second task while the first one is
+// still waiting, which is exactly what this tool exists to avoid.
+function askQuestion(sess, req, host) {
+  clearHero(sess);
+  const card = document.createElement('div');
+  card.className = 'question';
+  card.innerHTML =
+    '<div class="q-head">' + ICONS.info + '<span>Question from the agent</span></div>' +
+    '<div class="q-body"></div>' +
+    '<div class="q-opts"></div>' +
+    '<div class="q-answer"><input class="q-input" spellcheck="false" autocomplete="off"' +
+      ' placeholder="Type the answer, then press Enter"><button class="q-send">Answer</button></div>' +
+    '<div class="q-note">The run is waiting for this answer and continues in the same task, with your answer as the tool result.</div>';
+  card.querySelector('.q-body').textContent = req.question || '(the question was empty)';
+
+  const opts = card.querySelector('.q-opts');
+  (req.options || []).forEach((text) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'q-opt';
+    b.textContent = text;
+    b.onclick = () => sendAnswer(text);
+    opts.append(b);
+  });
+  if (!opts.children.length) opts.remove();
+
+  const input = card.querySelector('.q-input');
+  const button = card.querySelector('.q-send');
+  let closed = false;
+
+  const resolve = (answer) => {
+    card.classList.add('resolved');
+    card.querySelector('.q-head').innerHTML = ICONS.check + '<span>Answered</span>';
+    const field = card.querySelector('.q-answer');
+    if (field) field.remove();
+    const o = card.querySelector('.q-opts');
+    if (o) o.remove();
+    const note = card.querySelector('.q-note');
+    if (note) note.remove();
+    const body = card.querySelector('.q-body');
+    body.textContent = answer || '(skipped)';
+    body.classList.add('q-given');
+    // Answered: the step is running again, so the tool card says so.
+    if (host) host.dataset.state = 'running';
+    if (sess) setLive(sess, 'think', 'Thinking');
+    scrollToBottom();
+  };
+
+  const sendAnswer = (text) => {
+    if (closed) return;
+    closed = true;
+    button.disabled = true;
+    fetch('/api/answer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: req.id, answer: text })
+    })
+      .then((r) => r.json().then((d) => ({ ok: r.ok, d: d })).catch(() => ({ ok: r.ok, d: {} })))
+      .then((out) => {
+        if (!out.ok) {
+          // The run ended or the question was already answered: say so instead
+          // of pretending the answer landed.
+          closed = false;
+          button.disabled = false;
+          toast((out.d && out.d.error) || 'That answer did not reach the run.', 'error');
+          return;
+        }
+        resolve(text);
+      })
+      .catch(() => {
+        closed = false;
+        button.disabled = false;
+        toast('Could not reach dsagent.', 'error');
+      });
+  };
+
+  button.onclick = () => {
+    const text = input.value.trim();
+    if (!text) { input.focus(); return; }
+    sendAnswer(text);
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); button.onclick(); }
+  });
+
+  const slot = host && host.querySelector('.ap-slot');
+  if (slot) {
+    slot.style.display = 'block';
+    slot.append(card);
+    host.classList.add('open');
+    host.dataset.state = 'pending';
+  } else {
+    sess.thread.append(card);
+  }
+  setTimeout(() => input.focus(), 40);
+  scrollToBottom();
+}
+
 /* markdown streaming render with rAF coalescing */
 function enhanceCodeBlocks(root) {
   if (typeof hljs === 'undefined') return;
@@ -3253,6 +3461,21 @@ async function streamTask(sess, task, images) {
             askApproval(sess, { id: ev.text, tool: lastTool.name, args: lastTool.args, level: 'elevated' }, apHost);
           } else {
             askApproval(sess, { id: ev.text, level: 'elevated' }, apHost);
+          }
+        } else if (ev.type === 'question') {
+          // ask_user: the run is parked until the answer is posted, so the card
+          // takes the place of the approval slot rather than the composer.
+          dropEmptyBubble();
+          bubble = null;
+          setLive(sess, 'question', 'Waiting for your answer');
+          sess.thread.querySelectorAll('.tool-card[data-state="running"]').forEach((c) => { c.dataset.state = 'pending'; });
+          setTimelineState(toolRow, 'pending');
+          let q = null;
+          try { q = JSON.parse(ev.text); } catch (e) { q = null; }
+          if (q && typeof q === 'object' && q.question) {
+            askQuestion(sess, q, toolCard || lastCard);
+          } else {
+            addSysLine(sess, 'The agent asked a question this page could not read.');
           }
         }
       }
@@ -3867,6 +4090,7 @@ function applyConfig(c) {
   setAutoBadge(!!c.auto_approve);
   paintWatchdog(c);
   paintMCP(c);
+  paintEffort(c);
   paintNotify(c);
   renderOnboarding();
 }
@@ -3874,6 +4098,32 @@ function applyConfig(c) {
 // The two command-notification switches, painted from the server config they
 // live in: dsagent raises the Windows toast, so the setting cannot be a browser
 // preference - it has to apply even when no tab is open.
+// The effort switch reads the server config, not a browser preference: the
+// posture has to apply to a task even if a different tab sends it.
+function paintEffort(c) {
+  const want = (c && c.effort) || 'balanced';
+  $$('#cfg-effort button').forEach((b) => b.classList.toggle('active', b.dataset.effort === want));
+}
+
+// Changing the effort saves it immediately: the next task is usually typed
+// seconds later, and a Save step would silently run it at the old level.
+function setEffort(value) {
+  fetch('/api/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ effort: value })
+  })
+    .then((r) => r.json())
+    .then((c) => {
+      if (c && c.error) { toast(c.error, 'error'); return; }
+      applyConfig(c);
+      toast(value === 'direct' ? 'Direct: a plain instruction is done in one call'
+        : value === 'thorough' ? 'Thorough: investigate, change, then verify'
+        : 'Balanced: match the work to the request', 'info');
+    })
+    .catch(() => toast('Could not save the effort setting.', 'error'));
+}
+
 function paintNotify(c) {
   const any = $('#cfg-notify-any');
   const danger = $('#cfg-notify-danger');
@@ -3909,6 +4159,9 @@ function settingsSection(name) {
   $$('#settingsOverlay .sw-pane').forEach((p) => p.classList.toggle('active', p.id === 'sec-' + state.settingsSec));
   // The Data pane describes live storage, so it is measured when shown.
   if (state.settingsSec === 'data') paintData();
+  // The MCP pane describes running processes, so it is read when it is shown
+  // rather than whenever the settings window was opened.
+  if (state.settingsSec === 'mcp') refreshMCPState();
 }
 
 function loadSettingsSection() {
@@ -3943,6 +4196,7 @@ function openSettings(section) {
     $('#cfg-maxsteps').value = c.max_steps || 25;
     paintWatchdog(c);
     paintMCP(c);
+    paintEffort(c);
     state.autoAtOpen = !!c.auto_approve;
     paintKeyState(c);
     showCfgError('');
@@ -4031,17 +4285,223 @@ function refreshMCPState() {
 // of the box, which may hold unsaved edits.
 function paintMCPState(d) {
   const el = $('#mcpState');
-  if (!el) return;
+  const box = $('#mcpServers');
   const servers = (d && d.servers) || [];
+  const tools = d && typeof d.tools === 'number' ? d.tools : 0;
+  if (el) {
+    el.textContent = servers.length
+      ? servers.length + (servers.length === 1 ? ' server, ' : ' servers, ') +
+        tools + (tools === 1 ? ' tool in the tool list' : ' tools in the tool list')
+      : 'no MCP server is configured';
+  }
+  if (!box) return;
+  box.textContent = '';
   if (!servers.length) {
-    el.textContent = 'no MCP server is configured';
+    const empty = document.createElement('span');
+    empty.className = 'pref-hint';
+    empty.textContent = 'Nothing is configured. Add an entry to the JSON below, then Save.';
+    box.append(empty);
     return;
   }
-  el.textContent = servers.map((s) => {
-    if (s.disabled) return s.name + ': off';
-    if (s.connected) return s.name + ': ' + s.tools + (s.tools === 1 ? ' tool' : ' tools');
-    return s.name + ': not running' + (s.error ? ' - ' + s.error : '');
-  }).join('  Â·  ');
+  servers.forEach((s) => box.append(mcpRow(s)));
+}
+
+// One server as one row. The dot is the state, the meta line is the reason when
+// there is one, and the buttons act on that server alone - the same three
+// actions mcp_control offers the agent, so the pane and the tool never drift.
+function mcpRow(s) {
+  const row = document.createElement('div');
+  row.className = 'mcp-row';
+
+  // Named dotState, not state: a local called `state` shadows the global UI
+  // state object, and the settings below read the saved config from it.
+  const dotState = s.disabled ? 'disabled' : s.connected ? 'running' : 'stopped';
+  const dot = document.createElement('span');
+  dot.className = 'mcp-dot ' + (dotState === 'running' ? 'running' : dotState === 'stopped' ? 'stopped' : '');
+  dot.title = dotState;
+
+  const name = document.createElement('span');
+  name.className = 'mcp-name';
+  name.textContent = s.name;
+
+  const meta = document.createElement('span');
+  meta.className = 'mcp-meta';
+  if (s.disabled) {
+    meta.textContent = 'disabled in the configuration';
+  } else if (s.connected) {
+    meta.textContent = s.tools + (s.tools === 1 ? ' tool' : ' tools') + (s.pid ? ', pid ' + s.pid : '');
+  } else {
+    meta.textContent = s.error || 'not running';
+  }
+  // The full command line and every tool name are one hover away: the row has to
+  // stay readable at the width of the pane.
+  const toolNames = Array.isArray(s.tool_names) && s.tool_names.length
+    ? s.tool_names.join(', ')
+    : 'no tool names reported';
+  meta.title = (s.command ? s.command + '\n' : '') + toolNames;
+
+  const btns = document.createElement('span');
+  btns.className = 'mcp-btns';
+  const act = (label, action) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'btn-sm ghost';
+    b.textContent = label;
+    b.onclick = () => mcpServerAction(s.name, action);
+    btns.append(b);
+  };
+  if (!s.disabled) {
+    if (!s.connected) act('Start', 'start');
+    if (s.connected) act('Stop', 'stop');
+  }
+  act('Restart', 'restart');
+
+  // The policy, on the row itself: "why did that call not ask" has to be
+  // answerable without opening anything.
+  const cfg = (state.config && Array.isArray(state.config.mcp_servers))
+    ? state.config.mcp_servers.find((e) => e && e.name === s.name)
+    : null;
+  const policy = mcpPolicyOf(cfg);
+  let chip = null;
+  if (!s.disabled) {
+    chip = document.createElement('span');
+    chip.className = 'mcp-policy ' + policy;
+    chip.textContent = policy === 'allow' ? 'trusted' : policy === 'block' ? 'blocked' : 'asks';
+    chip.title = mcpPolicyHint(policy);
+  }
+
+  // Fold-out per-server settings. They are saved through /api/config like the
+  // JSON box, so the file stays the one source of truth.
+  const cog = document.createElement('button');
+  cog.type = 'button';
+  cog.className = 'btn-sm ghost';
+  cog.textContent = 'Settings';
+  cog.onclick = () => row.classList.toggle('open');
+  btns.append(cog);
+
+  // Order matters and is fixed here: state dot, name, meta, policy chip, the
+  // buttons, then the fold-out settings on their own line.
+  row.append(dot, name, meta);
+  if (chip) row.append(chip);
+  row.append(btns);
+  row.append(mcpSettingsBlock(s.name, cfg));
+  return row;
+}
+
+// mcpPolicyOf reads an entry's approval with the server's default applied.
+function mcpPolicyOf(cfg) {
+  const v = cfg && typeof cfg.approval === 'string' ? cfg.approval.toLowerCase() : 'ask';
+  return v === 'allow' || v === 'block' ? v : 'ask';
+}
+
+function mcpPolicyHint(p) {
+  if (p === 'allow') return 'Trusted: its tools run without asking for approval, in Agent mode only.';
+  if (p === 'block') return 'Blocked: its tools are not offered to the model at all.';
+  return 'Asks: every call from this server shows a permission card first.';
+}
+
+// The three knobs a server has beyond its command line. They are patched onto
+// the saved list, then the servers are reloaded: an allow-list and a timeout
+// only mean something to the catalogue that was built from them.
+function mcpSettingsBlock(name, cfg) {
+  const box = document.createElement('div');
+  box.className = 'mcp-cfg';
+  const policy = mcpPolicyOf(cfg);
+  box.innerHTML =
+    '<div class="mcp-cfg-row"><label>Approval</label>' +
+      '<select class="mcp-approval">' +
+        '<option value="ask">Ask before every call</option>' +
+        '<option value="allow">Trusted - run without asking</option>' +
+        '<option value="block">Blocked - do not offer the tools</option>' +
+      '</select></div>' +
+    '<div class="mcp-cfg-row"><label>Tools</label>' +
+      '<input class="mcp-tools" spellcheck="false" placeholder="every tool the server advertises"></div>' +
+    '<div class="mcp-cfg-row"><label>Timeout</label>' +
+      '<input class="mcp-timeout" type="number" min="0" max="3600" step="30" placeholder="0 = default">' +
+      '<span>seconds per call</span></div>' +
+    '<div class="sw-actions" style="margin-top:6px">' +
+      '<button type="button" class="btn-sm ghost mcp-apply">Apply and reload</button>' +
+      '<span class="pref-hint mcp-note" style="margin:0"></span>' +
+    '</div>';
+
+  const sel = box.querySelector('.mcp-approval');
+  const tools = box.querySelector('.mcp-tools');
+  const timeout = box.querySelector('.mcp-timeout');
+  sel.value = policy;
+  tools.value = cfg && Array.isArray(cfg.tools) ? cfg.tools.join(', ') : '';
+  timeout.value = cfg && cfg.timeout_sec ? String(cfg.timeout_sec) : '';
+
+  box.querySelector('.mcp-apply').onclick = () => {
+    const list = (state.config && Array.isArray(state.config.mcp_servers)) ? state.config.mcp_servers : [];
+    const at = list.findIndex((e) => e && e.name === name);
+    if (at < 0) { toast('That server is not in the saved list any more.', 'error'); return; }
+    const entry = Object.assign({}, list[at]);
+    const p = sel.value;
+    if (p === 'ask') delete entry.approval; else entry.approval = p;
+    const names = tools.value.split(',').map((x) => x.trim()).filter(Boolean);
+    if (names.length) entry.tools = names; else delete entry.tools;
+    const secs = parseInt(timeout.value, 10);
+    if (!isNaN(secs) && secs > 0) entry.timeout_sec = secs; else delete entry.timeout_sec;
+    const next = list.slice();
+    next[at] = entry;
+
+    const note = box.querySelector('.mcp-note');
+    if (note) note.textContent = 'saving...';
+    fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mcp_servers: next })
+    })
+      .then((r) => r.json().then((d) => ({ ok: r.ok, d: d })).catch(() => ({ ok: r.ok, d: {} })))
+      .then((out) => {
+        if (!out.ok) {
+          if (note) note.textContent = '';
+          toast((out.d && out.d.error) || 'The server settings were refused.', 'error');
+          return;
+        }
+        applyConfig(out.d);
+        if (note) note.textContent = 'saved - reloading the servers';
+        // A full reload, not a restart of this one server: the catalogue is
+        // built from the config, and the agent only re-reads the list when it is
+        // told the list changed. A restart here would start the server from the
+        // entry it was already holding, which is the one without these settings.
+        fetch('/api/mcp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'reload' })
+        })
+          .then((r) => r.json().then((d) => ({ ok: r.ok, d: d })).catch(() => ({ ok: r.ok, d: {} })))
+          .then((res) => {
+            paintMCPState(res.d);
+            const row = document.querySelector('#mcpServers .mcp-row.open');
+            if (row) row.classList.add('open');
+          })
+          .catch(() => toast('Could not reload that server.', 'error'));
+      })
+      .catch(() => { if (note) note.textContent = ''; toast('Could not save the server settings.', 'error'); });
+  };
+  return box;
+}
+
+// One server, one action. The reply is the whole status report, so the pane is
+// repainted from what the agent actually did rather than from what was asked.
+function mcpServerAction(name, action) {
+  const box = $('#mcpServers');
+  if (box) box.classList.add('busy');
+  fetch('/api/mcp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: action, name: name })
+  })
+    .then((r) => r.json().then((d) => ({ ok: r.ok, d: d })).catch(() => ({ ok: r.ok, d: {} })))
+    .then((out) => {
+      const d = out.d || {};
+      if (d.error) toast(d.error, 'error');
+      else toast(name + ': ' + action + ' done', 'info');
+      paintMCPState(d);
+    })
+    .catch(() => toast('Could not reach dsagent.', 'error'))
+    .then(() => { if (box) box.classList.remove('busy'); });
 }
 
 // Reload restarts the servers from what is saved, not from the box: the box may

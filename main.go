@@ -37,6 +37,9 @@ func main() {
 	mux.HandleFunc("/api/abort", postOnly(ag.handleAbort))
 	mux.HandleFunc("/api/status", ag.handleStatus)
 	mux.HandleFunc("/api/approve", postOnly(ag.handleApprove))
+	// ask_user is answered here: a question is not an approval, and mixing the
+	// two would mean a card that can be answered without reading it.
+	mux.HandleFunc("/api/answer", postOnly(ag.handleAnswer))
 	mux.HandleFunc("/api/clear", postOnly(ag.handleClear))
 	mux.HandleFunc("/api/config", handleConfig(cfg))
 	mux.HandleFunc("/api/key", handleKey(cfg))
