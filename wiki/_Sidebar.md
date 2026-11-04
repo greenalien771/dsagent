@@ -1,0 +1,15 @@
+**[dsagent wiki](Home)**
+
+- [Getting started](Getting-Started)
+- [Configuration](Configuration)
+- [Providers](Providers)
+- [Tools](Tools)
+- [Modes](Modes)
+- [Safety and approvals](Safety-and-Approvals)
+- [MCP servers](MCP-Servers)
+- [Desktop and images](Desktop-and-Images)
+- [HTTP API](HTTP-API)
+- [Interface](Interface)
+- [Architecture](Architecture)
+- [Development](Development)
+- [Troubleshooting](Troubleshooting)
